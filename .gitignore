@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.live.example
 *.pem
 *.key
 
@@ -35,5 +36,17 @@ Thumbs.db
 
 # Logs and temporary files
 *.log
+logs/
+backups/
+.mvp-maintenance.lock
 tmp/
 temp/
+
+# Runtime data
+data/*.db
+data/*.db-*
+data/artifacts/*
+!data/artifacts/.gitkeep
+
+# Reproducibly installed by scripts/setup_kronos.py
+vendor/kronos/

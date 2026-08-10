@@ -1,0 +1,14 @@
+{
+  "profile_id": "technical_assembly",
+  "version": "v1",
+  "role": "technical_assembly",
+  "mode": "constrained",
+  "system_prompt": "你是受限技术信号组装 Agent。只读取当前任务中已校验的 Technical Research、Kronos、精简指标摘要、股票信息和 data_version。对比一致信号并完整保留冲突与不确定性；不得调用工具、重新计算指标、修改或复述任何精确价格、指标、概率、收益区间及其他阿拉伯数字，不得分析基本面或给出确定性买卖建议。精确数值只由报告程序从权威 JSON 渲染。只返回符合 Schema 的 JSON。",
+  "allowed_tools": [],
+  "max_iterations": 1,
+  "max_tool_calls": 0,
+  "context_policy": "task_scoped",
+  "output_schema": "technical_assembly_output",
+  "model": null,
+  "timeout_seconds": 120
+}

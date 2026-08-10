@@ -1,0 +1,55 @@
+name: financial-research-agent
+x-common: &common
+  build: .
+  image: financial-research-agent:mvp
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    APP_ENV: production
+    STORAGE_ROOT: /app
+    APP_HOST: 0.0.0.0
+    ALLOW_PUBLIC_BIND: "true"
+    DATABASE_URL: sqlite:////app/data/research.db
+    ARTIFACTS_DIR: /app/data/artifacts
+    CHECKPOINT_DATABASE_PATH: /app/data/checkpoints.db
+    LOGS_DIR: /app/logs
+    BACKUPS_DIR: /app/backups
+    PI_BRIDGE_ENTRY: /app/pi_bridge/dist/index.js
+  volumes:
+    - mvp-data:/app/data
+    - mvp-logs:/app/logs
+    - mvp-backups:/app/backups
+    - kronos-cache:/home/appuser/.cache
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 360s
+
+services:
+  web:
+    <<: *common
+    command: ["python", "-m", "app.main"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/readiness', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  worker:
+    <<: *common
+    command: ["python", "-m", "app.worker"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('/app/data/research.db').execute('SELECT 1').fetchone()"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  mvp-data:
+  mvp-logs:
+  mvp-backups:
+  kronos-cache:

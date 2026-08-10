@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>金融投研 Agent</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/">金融投研 Agent</a>
+      <span class="phase-label">第五阶段：正式基本面报告与状态闭环</span>
+    </header>
+
+    <main class="page-shell">
+      <section class="page-heading">
+        <h1>创建研究任务</h1>
+        <p>提交 A 股名称或代码与分析类型，Worker 将执行对应流程并生成研究报告。</p>
+      </section>
+
+      <section class="panel form-panel" aria-labelledby="create-title">
+        <h2 id="create-title">任务参数</h2>
+        <form id="research-form">
+          <div class="form-grid">
+            <label class="field field-wide">
+              <span>股票名称或代码</span>
+              <input id="symbol" name="symbol" type="text" maxlength="64" autocomplete="off" placeholder="例如：600519 或 贵州茅台" required>
+            </label>
+
+            <label class="field">
+              <span>分析类型</span>
+              <select id="analysis-type" name="analysis_type">
+                <option value="technical">技术面分析</option>
+                <option value="fundamental">基本面专业研究</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>投资风格</span>
+              <select id="policy-id" name="policy_id">
+                <option value="general_research">通用研究</option>
+                <option value="buffett_style">巴菲特风格</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>数据截止日期</span>
+              <input id="as-of" name="as_of" type="date">
+            </label>
+          </div>
+
+          <div id="form-error" class="notice notice-error" role="alert" hidden></div>
+          <button id="submit-button" class="button button-primary" type="submit">开始分析</button>
+        </form>
+      </section>
+
+      <section class="panel" aria-labelledby="history-title">
+        <div class="section-header">
+          <h2 id="history-title">最近任务</h2>
+          <button id="refresh-button" class="button button-secondary" type="button">刷新</button>
+        </div>
+        <div id="history-error" class="notice notice-error" role="alert" hidden></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>股票</th>
+                <th>分析类型</th>
+                <th>状态</th>
+                <th>当前阶段</th>
+                <th>创建时间</th>
+              </tr>
+            </thead>
+            <tbody id="run-list">
+              <tr><td colspan="5" class="empty-state">正在加载任务…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/index.js" defer></script>
+  </body>
+</html>

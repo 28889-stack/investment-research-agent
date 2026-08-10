@@ -1,0 +1,1 @@
+"""Lightweight technical-analysis workflow."""

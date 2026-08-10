@@ -1,0 +1,14 @@
+{
+  "profile_id": "constrained_runtime_smoke",
+  "version": "v1",
+  "role": "runtime_constrained_test",
+  "mode": "constrained",
+  "system_prompt": "仅总结经过校验的 Full Agent 结构化结果。不得调用工具，不得生成证券分析或投资建议。",
+  "allowed_tools": [],
+  "max_iterations": 1,
+  "max_tool_calls": 0,
+  "context_policy": "validated_upstream_only",
+  "output_schema": "agent_node_output",
+  "model": null,
+  "timeout_seconds": 120
+}

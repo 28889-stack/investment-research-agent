@@ -1,0 +1,6 @@
+# Official Kronos runtime dependencies not already provided by requirements.txt.
+torch>=2.7,<3
+einops==0.8.1
+huggingface_hub>=0.33.1,<2
+tqdm>=4.67.1,<5
+safetensors>=0.6.2,<1
