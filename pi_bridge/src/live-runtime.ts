@@ -136,6 +136,7 @@ export class LiveAgentSession {
       initialState: {
         systemPrompt,
         model: model as Model<any>,
+        thinkingLevel: "medium",
         tools: bridgeTools(session, () => {
           if (!this.activeInvoker) throw new Error("Tool callback is unavailable");
           return this.activeInvoker;

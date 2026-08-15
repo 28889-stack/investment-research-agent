@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from app import main as main_module
@@ -40,10 +41,18 @@ def test_home_page_serves_research_form(client):
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "创建研究任务" in response.text
+    assert "弦月研究" in response.text
+    assert "选择研究标的" in response.text
     assert 'id="research-form"' in response.text
-    assert "第五阶段：正式基本面报告与状态闭环" in response.text
+    assert 'id="technical-mode"' in response.text
+    assert 'id="fundamental-mode"' in response.text
+    assert 'id="workflow-preview"' in response.text
+    assert 'id="recent-research"' in response.text
+    assert 'class="signal-disc"' in response.text
+    assert 'class="ambient-field"' in response.text
+    assert 'id="cursor-spotlight"' in response.text
     assert "基本面分析（Runtime 验证）" not in response.text
+    assert "Kimi" not in response.text
 
 
 def test_run_and_report_pages_are_available(client):
@@ -58,13 +67,70 @@ def test_run_and_report_pages_are_available(client):
     assert run_page.status_code == 200
     assert 'id="progress-bar"' in run_page.text
     assert 'id="current-node"' in run_page.text
+    assert 'id="current-work"' in run_page.text
     assert 'id="execution-list"' in run_page.text
     assert 'id="fundamental-stages"' in run_page.text
+    assert 'class="workflow-branch"' in run_page.text
+    assert 'class="ambient-field"' in run_page.text
+    assert 'id="cursor-spotlight"' in run_page.text
+    assert 'data-node="business_research"' in run_page.text
+    assert 'data-node="industry_research"' in run_page.text
     assert "Lead 规划" in run_page.text
     assert "正式报告 Writer" in run_page.text
     assert "生成正式报告" in run_page.text
     assert report_page.status_code == 200
     assert 'id="report-content"' in report_page.text
+
+
+def test_application_pages_define_eclipse_glass_motion_and_responsive_tracks():
+    stylesheet = (main_module.STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+    index_script = (main_module.STATIC_DIR / "index.js").read_text(encoding="utf-8")
+    run_script = (main_module.STATIC_DIR / "run.js").read_text(encoding="utf-8")
+
+    assert ".signal-disc" in stylesheet
+    assert ".workflow-branch" in stylesheet
+    assert ".ambient-field" in stylesheet
+    assert ".glass-surface" in stylesheet
+    assert ".cursor-spotlight" in stylesheet
+    assert ".border-beam" in stylesheet
+    assert "--app-bg: #07080b" in stylesheet.lower()
+    assert "@supports not (backdrop-filter: blur(1px))" in stylesheet
+    assert "@media (prefers-reduced-motion: reduce)" in stylesheet
+    assert "setupSpotlight" in index_script
+    assert "setupSpotlight" in run_script
+    assert "animateProgressValue" in run_script
+
+
+def test_research_track_has_a_deliberate_inset_from_the_sidebar_edge():
+    stylesheet = (main_module.STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+    assert "padding: 34px 32px 42px 20px;" in stylesheet
+
+
+def test_application_uses_deep_space_glass_tokens_and_reduced_motion_support():
+    stylesheet = (main_module.STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+    assert "--app-void: #050711;" in stylesheet
+    assert "--app-glass: rgba(14, 20, 37, .72);" in stylesheet
+    assert "--app-ice: #91b8ff;" in stylesheet
+    assert ".glass-surface::before" in stylesheet
+    assert "@keyframes glass-beam-sweep" in stylesheet
+    assert "@media (prefers-reduced-motion: reduce)" in stylesheet
+
+
+def test_home_page_preview_uses_the_selected_mode_element_without_runtime_error():
+    index_script = (main_module.STATIC_DIR / "index.js").read_text(encoding="utf-8")
+    match = re.search(
+        r"function renderWorkflowPreview\(\) \{(?P<body>.*?)\n\}",
+        index_script,
+        flags=re.DOTALL,
+    )
+
+    assert match is not None
+    preview_body = match.group("body")
+    assert "const selectedMode = document.querySelector" in preview_body
+    assert "selectedMode?.value || \"technical\"" in preview_body
+    assert "selectedMode?.closest(\".research-mode\")" in preview_body
 
 
 def test_report_html_is_sanitized(client, app, tmp_path: Path):
@@ -124,6 +190,14 @@ def test_export_technical_report_is_self_contained(client, settings, session_fac
     assert "/static/styles.css" not in body
     assert f"/api/runs/{run_id}/artifacts/technical_chart.png" not in body
     assert "data:image/png;base64," in body
+    assert "<canvas" in body
+    assert "getContext('2d')" in body
+    artifact = (settings.artifacts_dir / run_id / "technical_report.html").read_text(
+        encoding="utf-8"
+    )
+    assert body == artifact
+    assert "requestAnimationFrame" in body
+    assert "formatAxisTick" in body
 
 
 def test_export_fundamental_report_has_no_chart_data_uri(client, settings, session_factory):
@@ -136,6 +210,11 @@ def test_export_fundamental_report_has_no_chart_data_uri(client, settings, sessi
     assert "data:image/png;base64," not in response.text
     assert "/static/" not in response.text
     assert "result_manifest.json" not in response.text
+    assert "requestAnimationFrame" in response.text
+    assert "formatAxisTick" in response.text
+    assert response.text == (
+        settings.artifacts_dir / run_id / "fundamental_report.html"
+    ).read_text(encoding="utf-8")
 
 
 def test_export_report_is_sanitized(client, app, tmp_path: Path):
@@ -161,7 +240,8 @@ def test_export_report_is_sanitized(client, app, tmp_path: Path):
     response = client.get(f"/api/runs/{created['run_id']}/report/export")
 
     assert response.status_code == 200
-    assert "<script>" not in response.text
+    assert response.text.count("<script>") == 1
+    assert "<script>alert('unsafe')</script>" not in response.text
     assert "javascript:" not in response.text
 
 

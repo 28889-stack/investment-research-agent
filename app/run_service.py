@@ -550,11 +550,20 @@ class RunService:
             body = document[start : end + len("</main>")]
             markdown_path = path.with_suffix(".md")
             markdown_text = markdown_path.read_text(encoding="utf-8") if markdown_path.is_file() else ""
+            def allow_report_attribute(tag: str, name: str, value: str) -> bool:
+                if tag == "img":
+                    return name in {"class", "alt"} or (
+                        name == "src" and value.startswith("data:image/png;base64,")
+                    )
+                return name in {"class", "id", "data-report-visuals", "data-chart", "aria-label"} or (
+                    tag == "a" and name in {"href", "title"}
+                )
+
             safe_html = bleach.clean(
                 body,
-                tags={"main", "header", "section", "article", "aside", "footer", "details", "summary", "canvas", "div", "span", "small", "b", "h1", "h2", "h3", "p", "ul", "ol", "li", "strong", "em", "code", "pre", "blockquote", "hr", "br", "table", "thead", "tbody", "tr", "th", "td", "a"},
-                attributes={"*": ["class", "id", "data-report-visuals", "data-chart", "aria-label"], "a": ["href", "title"]},
-                protocols={"http", "https"},
+                tags={"main", "header", "section", "article", "aside", "footer", "details", "summary", "canvas", "div", "span", "small", "b", "h1", "h2", "h3", "h4", "p", "ul", "ol", "li", "strong", "em", "code", "pre", "blockquote", "hr", "br", "table", "thead", "tbody", "tr", "th", "td", "a", "figure", "figcaption", "img"},
+                attributes=allow_report_attribute,
+                protocols={"http", "https", "data"},
                 strip=True,
             )
             return run, markdown_text, safe_html

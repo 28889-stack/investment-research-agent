@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from app.fundamental.workflow import FundamentalWorkflow
 from app.run_service import RunService
+from app.runtime.exceptions import AgentTimeoutError
 from app.runtime.pi_client import MockPiClient
 from app.runtime.repository import RuntimeRepository
 
@@ -22,7 +25,9 @@ NODES = [
     "lead_final_review",
     "lead_synthesis",
     "writer_planning",
+    "build_fundamental_visuals",
     "fundamental_writer",
+    "final_synthesis",
     "write_fundamental_report",
 ]
 
@@ -36,15 +41,22 @@ ARTIFACTS = {
     "business_research.json",
     "industry_research.json",
     "lead_review.json",
+    "deep_research_tasks.json",
     "deep_research.json",
     "financial_research.json",
     "valuation_result.json",
     "valuation_research.json",
     "lead_final_review.json",
     "retrieval_package.json",
+    "research_loop.json",
     "lead_synthesis.json",
     "writer_plan.json",
+    "fundamental_chart_candidates.json",
     "fundamental_research_package.md",
+    "writer_section_business.json",
+    "writer_section_industry.json",
+    "writer_section_financial.json",
+    "final_synthesis.json",
     "fundamental_writer.json",
     "fundamental_report.md",
     "report_visuals.json",
@@ -89,6 +101,247 @@ class InvalidLeadEvidenceClient(MockPiClient):
         return raw
 
 
+class LeadWithoutSourceReadClient(MockPiClient):
+    def run_agent(self, **kwargs):
+        session = self.sessions[kwargs["session_id"]]
+        context = kwargs["context"]
+        if (
+            session["profile"]["profile_id"] == "fundamental_lead"
+            and context.get("node") == "lead_planning"
+        ):
+            kwargs["tool_handler"]("get_company_profile", {})
+            kwargs["tool_handler"](
+                "search_research_sources", {"query": "公司经营与行业暴露"}
+            )
+            run = context["run"]
+            return json.dumps(
+                {
+                    "symbol": run["resolved_symbol"],
+                    "as_of": run["as_of"],
+                    "thesis": "先形成公司经营与外部定价变量的问题地图。",
+                    "key_questions": ["外部变量如何传导至公司盈利"],
+                    "business_scope": ["公司产销量、售价与成本如何变化"],
+                    "industry_scope": ["行业供需与宏观定价变量如何变化"],
+                    "industry_types": ["资源采掘与商品定价"],
+                    "financial_focus": ["收入、利润与现金流传导"],
+                    "valuation_focus": ["估值对盈利和价格假设的敏感性"],
+                    "risks_to_verify": ["商品价格与成本波动"],
+                    "evidence_ids": [],
+                },
+                ensure_ascii=False,
+            )
+        return super().run_agent(**kwargs)
+
+
+class ResearchAgentsWithoutSourceReadClient(MockPiClient):
+    def run_agent(self, **kwargs):
+        session = self.sessions[kwargs["session_id"]]
+        profile_id = session["profile"]["profile_id"]
+        context = kwargs["context"]
+        run = context.get("run", {})
+        symbol = run.get("resolved_symbol", "")
+        if profile_id == "business_research":
+            kwargs["tool_handler"]("get_company_profile", {})
+            kwargs["tool_handler"](
+                "search_research_sources", {"query": "公司经营与项目进展"}
+            )
+            return json.dumps(
+                {
+                    "symbol": symbol,
+                    "summary": "已形成公司经营研究框架，当前搜索结果尚不足以形成可引用事实。",
+                    "findings": [],
+                    "risks": [],
+                    "missing_information": ["待补充可读取的公司经营来源"],
+                    "topics": [],
+                },
+                ensure_ascii=False,
+            )
+        if profile_id == "industry_research":
+            kwargs["tool_handler"](
+                "search_research_sources", {"query": "行业供需与宏观定价"}
+            )
+            return json.dumps(
+                {
+                    "symbol": symbol,
+                    "summary": "已形成行业研究框架，当前搜索结果尚不足以形成可引用事实。",
+                    "findings": [],
+                    "risks": [],
+                    "missing_information": ["待补充可读取的行业来源"],
+                    "topics": [],
+                },
+                ensure_ascii=False,
+            )
+        if profile_id == "deep_research":
+            cards = context["artifacts"]["lead_review"].get(
+                "deep_research_tasks", []
+            )
+            for card in cards:
+                kwargs["tool_handler"](
+                    "search_research_sources",
+                    {"query": card["topic"], "task_card_id": card["task_id"]},
+                )
+            return json.dumps(
+                {
+                    "symbol": symbol,
+                    "summary": "已执行专题搜索，但没有可读取来源，保留为未解决事项。",
+                    "findings": [],
+                    "risks": [],
+                    "missing_information": ["专题来源暂不可读取"],
+                    "topics": [
+                        {
+                            "task_id": card["task_id"],
+                            "topic": card["topic"],
+                            "summary": "当前未形成可靠增量结论。",
+                            "findings": [],
+                            "risks": [],
+                            "missing_information": card["research_questions"],
+                        }
+                        for card in cards
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        return super().run_agent(**kwargs)
+
+
+class SpecialistTimeoutThenSynthesisClient(MockPiClient):
+    def __init__(
+        self,
+        target_profile: str,
+        service: RunService | None = None,
+        *,
+        cancel_timing: str | None = None,
+    ) -> None:
+        super().__init__()
+        self.target_profile = target_profile
+        self.service = service
+        self.cancel_timing = cancel_timing
+        self.target_calls = 0
+        self.retry_tools: list[dict] | None = None
+        self.retry_has_evidence = False
+        self.first_evidence_id = ""
+
+    def run_agent(self, **kwargs):
+        session = self.sessions[kwargs["session_id"]]
+        if session["profile"]["profile_id"] != self.target_profile:
+            return super().run_agent(**kwargs)
+
+        self.target_calls += 1
+        context = kwargs["context"]
+        tool_handler = kwargs["tool_handler"]
+        symbol = context["run"]["resolved_symbol"]
+        if self.target_calls == 1:
+            if self.target_profile == "business_research":
+                tool_handler("get_company_profile", {})
+            sources = tool_handler(
+                "search_research_sources",
+                {
+                    "query": (
+                        "公司业务研究"
+                        if self.target_profile == "business_research"
+                        else "行业供需与定价"
+                    )
+                },
+            )
+            if self.target_profile == "business_research":
+                selected = sources["items"][-1]
+                evidence = tool_handler(
+                    "read_research_source",
+                    {
+                        "result_id": selected["result_id"],
+                        "claim": "第一次 attempt 已取得的研究证据",
+                        "evidence_type": "historical_fact",
+                    },
+                )
+                self.first_evidence_id = evidence["evidence_id"]
+            else:
+                # Lead Planning has already produced ev_001. Industry's first
+                # attempt proves retrieval completion; the synthesis retry may
+                # use any bounded current-run Evidence supplied by workflow.
+                self.first_evidence_id = "ev_001"
+            if self.cancel_timing in {"before_retry", "after_return"}:
+                assert self.service is not None
+                self.service.request_cancel(context["run"]["run_id"])
+            if self.cancel_timing != "after_return":
+                raise AgentTimeoutError("specialist timed out after retrieval")
+        else:
+            self.retry_tools = list(session["tools"])
+            self.retry_has_evidence = bool(
+                context.get("artifacts", {}).get("evidence", {}).get("items")
+            )
+
+        return json.dumps(
+            {
+                "symbol": symbol,
+                "summary": "基于第一次 attempt 已获得的 Evidence 完成收束。",
+                "findings": [
+                    {
+                        "claim": "已有证据支持当前的方向性研究结论。",
+                        "evidence_ids": [self.first_evidence_id],
+                        "confidence": "medium",
+                    }
+                ],
+                "risks": [],
+                "missing_information": ["未覆盖的事项保留为未解决项"],
+            },
+            ensure_ascii=False,
+        )
+
+
+class DeepTimeoutThenSynthesisClient(MockPiClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.deep_calls = 0
+        self.retry_tools: list[dict] | None = None
+        self.retry_has_evidence = False
+
+    def run_agent(self, **kwargs):
+        session = self.sessions[kwargs["session_id"]]
+        if session["profile"]["profile_id"] != "deep_research":
+            return super().run_agent(**kwargs)
+
+        self.deep_calls += 1
+        context = kwargs["context"]
+        cards = context["artifacts"]["lead_review"]["deep_research_tasks"]
+        if self.deep_calls == 1:
+            for card in cards:
+                kwargs["tool_handler"](
+                    "search_research_sources",
+                    {
+                        "query": card["topic"],
+                        "task_card_id": card["task_id"],
+                    },
+                )
+            raise AgentTimeoutError("deep timed out after retrieval")
+
+        self.retry_tools = list(session["tools"])
+        self.retry_has_evidence = bool(
+            context.get("artifacts", {}).get("evidence", {}).get("items")
+        )
+        symbol = context["run"]["resolved_symbol"]
+        return json.dumps(
+            {
+                "symbol": symbol,
+                "summary": "基于第一次 attempt 的检索与 Evidence 完成专题收束。",
+                "findings": [],
+                "risks": [],
+                "missing_information": ["没有可靠增量的事项保留为未解决项"],
+                "topics": [
+                    {
+                        "task_id": card["task_id"],
+                        "topic": card["topic"],
+                        "summary": "已完成专题收束。",
+                        "findings": [],
+                        "risks": [],
+                        "missing_information": card["research_questions"],
+                    }
+                    for card in cards
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+
 def test_fundamental_graph_has_extended_research_and_writer_planning_nodes(settings, session_factory) -> None:
     workflow = _workflow(settings, session_factory)
     try:
@@ -96,6 +349,211 @@ def test_fundamental_graph_has_extended_research_and_writer_planning_nodes(setti
     finally:
         workflow.shutdown()
     assert nodes == set(NODES)
+
+
+def test_lead_planning_can_finish_without_reading_a_source(
+    settings, session_factory
+) -> None:
+    service, run_id = _run(settings, session_factory)
+    workflow = FundamentalWorkflow(
+        settings,
+        session_factory,
+        pi_client=LeadWithoutSourceReadClient(),
+        interrupt_after=["lead_planning"],
+    )
+    try:
+        state = workflow.run(run_id)
+    finally:
+        workflow.shutdown()
+
+    execution = next(
+        item
+        for item in RuntimeRepository(session_factory).list_executions(run_id)
+        if item.node_name == "lead_planning"
+    )
+    tools = RuntimeRepository(session_factory).list_tool_executions(
+        execution.execution_id
+    )
+    plan = json.loads(
+        (settings.artifacts_dir / run_id / "lead_plan.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert state["error_message"] is None
+    assert execution.status == "COMPLETED"
+    assert [item.tool_name for item in tools] == [
+        "get_company_profile",
+        "search_research_sources",
+    ]
+    assert plan["evidence_ids"] == []
+
+
+def test_research_agents_can_return_unresolved_results_without_source_reads(
+    settings, session_factory
+) -> None:
+    _service_obj, run_id = _run(settings, session_factory)
+    workflow = FundamentalWorkflow(
+        settings,
+        session_factory,
+        pi_client=ResearchAgentsWithoutSourceReadClient(),
+        interrupt_after=["deep_research"],
+    )
+    try:
+        state = workflow.run(run_id)
+    finally:
+        workflow.shutdown()
+
+    executions = {
+        item.node_name: item
+        for item in RuntimeRepository(session_factory).list_executions(run_id)
+    }
+    for node in ("business_research", "industry_research", "deep_research"):
+        execution = executions[node]
+        tools = RuntimeRepository(session_factory).list_tool_executions(
+            execution.execution_id
+        )
+        assert execution.status == "COMPLETED"
+        assert "read_research_source" not in {item.tool_name for item in tools}
+    assert state["error_message"] is None
+
+
+def test_specialist_runtime_tasks_keep_prior_round_results_readable(
+    settings, session_factory
+) -> None:
+    _service_obj, run_id = _run(settings, session_factory)
+    workflow = _workflow(settings, session_factory, interrupt_after=["industry_research"])
+    try:
+        workflow.run(run_id)
+    finally:
+        workflow.shutdown()
+
+    contexts = {
+        item.node_name: json.loads(item.input_context_json)
+        for item in RuntimeRepository(session_factory).list_executions(run_id)
+        if item.node_name in {"business_research", "industry_research"}
+    }
+    for node in ("business_research", "industry_research"):
+        task = contexts[node]["task"]
+        assert "停止继续搜索" in task
+        assert "前两轮" in task
+        assert "停止调用工具" not in task
+
+
+@pytest.mark.parametrize(
+    "target_profile", ["business_research", "industry_research"]
+)
+def test_specialist_timeout_after_retrieval_retries_as_evidence_only_synthesis(
+    settings, session_factory, target_profile
+) -> None:
+    _service_obj, run_id = _run(settings, session_factory)
+    client = SpecialistTimeoutThenSynthesisClient(target_profile)
+    workflow = FundamentalWorkflow(
+        settings,
+        session_factory,
+        pi_client=client,
+        interrupt_after=[target_profile],
+    )
+    try:
+        state = workflow.run(run_id)
+    finally:
+        workflow.shutdown()
+
+    directory = settings.artifacts_dir / run_id
+    executions = [
+        item
+        for item in RuntimeRepository(session_factory).list_executions(run_id)
+        if item.node_name == target_profile
+    ]
+    assert state["error_message"] is None
+    assert (directory / f"{target_profile}.json").is_file()
+    assert [(item.attempt, item.status) for item in executions] == [
+        (1, "FAILED"),
+        (2, "COMPLETED"),
+    ]
+    assert client.target_calls == 2
+    assert client.retry_tools == []
+    assert client.retry_has_evidence is True
+
+
+def test_deep_timeout_after_retrieval_retries_as_evidence_only_synthesis(
+    settings, session_factory
+) -> None:
+    _service_obj, run_id = _run(settings, session_factory)
+    client = DeepTimeoutThenSynthesisClient()
+    workflow = FundamentalWorkflow(
+        settings,
+        session_factory,
+        pi_client=client,
+        interrupt_after=["deep_research"],
+    )
+    try:
+        state = workflow.run(run_id)
+    finally:
+        workflow.shutdown()
+
+    executions = [
+        item
+        for item in RuntimeRepository(session_factory).list_executions(run_id)
+        if item.node_name == "deep_research"
+    ]
+    assert state["error_message"] is None
+    assert [(item.attempt, item.status) for item in executions] == [
+        (1, "FAILED"),
+        (2, "COMPLETED"),
+    ]
+    assert client.deep_calls == 2
+    assert client.retry_tools == []
+    assert client.retry_has_evidence is True
+    assert (settings.artifacts_dir / run_id / "deep_research.json").is_file()
+
+
+def test_cancel_requested_between_specialist_attempts_prevents_retry(
+    settings, session_factory
+) -> None:
+    service, run_id = _run(settings, session_factory)
+    client = SpecialistTimeoutThenSynthesisClient(
+        "industry_research", service, cancel_timing="before_retry"
+    )
+    workflow = FundamentalWorkflow(
+        settings,
+        session_factory,
+        pi_client=client,
+        interrupt_after=["industry_research"],
+    )
+    try:
+        state = workflow.run(run_id)
+    finally:
+        workflow.shutdown()
+
+    assert state["error_message"] == "CANCELLED"
+    assert service.get_run(run_id).status == "CANCELLED"
+    assert client.target_calls == 1
+    assert not (settings.artifacts_dir / run_id / "industry_research.json").exists()
+
+
+def test_cancel_requested_after_specialist_returns_skips_semantic_commit(
+    settings, session_factory
+) -> None:
+    service, run_id = _run(settings, session_factory)
+    client = SpecialistTimeoutThenSynthesisClient(
+        "business_research", service, cancel_timing="after_return"
+    )
+    workflow = FundamentalWorkflow(
+        settings,
+        session_factory,
+        pi_client=client,
+        interrupt_after=["business_research"],
+    )
+    try:
+        state = workflow.run(run_id)
+    finally:
+        workflow.shutdown()
+
+    assert state["error_message"] == "CANCELLED"
+    assert service.get_run(run_id).status == "CANCELLED"
+    assert client.target_calls == 1
+    assert not (settings.artifacts_dir / run_id / "business_research.json").exists()
 
 
 def test_fundamental_graph_adds_retrieval_synthesis_and_writer_planning_nodes(
@@ -139,6 +597,11 @@ def test_fundamental_mock_workflow_generates_complete_research_package(settings,
     assert str(valuation["relative"]["pe"]["value"]) in report
     assert "正式报告将在 Fundamental Writer 阶段生成" in package
     assert "本工作包不构成投资建议、交易指令或收益承诺。" in package
+    visuals = json.loads((directory / "report_visuals.json").read_text(encoding="utf-8"))
+    assert len([item for item in visuals["charts"] if item["status"] == "generated"]) >= 3
+    assert {item["plugin_id"] for item in visuals["charts"]} >= {
+        "financial_performance_trend", "profitability_quality", "cashflow_capex"
+    }
 
 
 def test_completed_fundamental_run_uses_html_report_as_the_final_artifact(
@@ -171,7 +634,10 @@ def test_agent_execution_permissions_and_assumption_handoff(settings, session_fa
         "lead_planning", "business_research", "industry_research", "lead_review",
         "deep_research",
         "lead_synthesis", "writer_planning",
-        "financial_research", "valuation_research", "lead_final_review", "fundamental_writer",
+        "chart_data_extractor",
+        "financial_research", "valuation_research", "lead_final_review",
+        "writer_section_business", "writer_section_industry", "writer_section_financial",
+        "final_synthesis",
     }
     assert completed["lead_planning"].tool_call_count == 3
     assert completed["business_research"].tool_call_count == 3
@@ -183,7 +649,11 @@ def test_agent_execution_permissions_and_assumption_handoff(settings, session_fa
     assert completed["lead_final_review"].tool_call_count == 0
     assert completed["lead_synthesis"].tool_call_count == 0
     assert completed["writer_planning"].tool_call_count == 0
-    assert completed["fundamental_writer"].tool_call_count == 0
+    assert completed["chart_data_extractor"].tool_call_count == 0
+    assert completed["writer_section_business"].tool_call_count == 0
+    assert completed["writer_section_industry"].tool_call_count == 0
+    assert completed["writer_section_financial"].tool_call_count == 0
+    assert completed["final_synthesis"].tool_call_count == 0
     directory = settings.artifacts_dir / run_id
     assumptions = json.loads((directory / "assumptions.json").read_text())["items"]
     valuation = json.loads((directory / "valuation_research.json").read_text())
@@ -207,7 +677,11 @@ def test_lead_review_tasks_are_passed_to_deep_research(settings, session_factory
     assert context["node"] == "deep_research"
     assert "lead_review" in context["artifacts"]
     assert context["artifacts"]["lead_review"]["financial_questions"]
-    assert "补充" in context["task"]
+    assert context["artifacts"]["lead_review"]["deep_research_tasks"]
+    assert "deep_research_tasks" in context["task"]
+    tasks = json.loads((settings.artifacts_dir / run_id / "deep_research_tasks.json").read_text())
+    output = json.loads((settings.artifacts_dir / run_id / "deep_research.json").read_text())
+    assert tasks["tasks"] and output["topics"][0]["task_id"] == tasks["tasks"][0]["task_id"]
 
 
 def test_fundamental_report_api_exposes_lightweight_package_metadata(settings, session_factory, client) -> None:
@@ -221,7 +695,7 @@ def test_fundamental_report_api_exposes_lightweight_package_metadata(settings, s
     response = client.get(f"/api/runs/{run_id}/report")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["evidence_count"] == 4
+    assert payload["evidence_count"] == 2
     assert payload["assumption_count"] == 3
     assert payload["ready_for_writer"] is True
     assert payload["writer_status"] == "completed"

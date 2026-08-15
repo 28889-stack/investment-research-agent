@@ -37,16 +37,84 @@ def test_fundamental_profiles_have_least_privilege(settings) -> None:
         "get_company_profile",
         "search_research_sources",
         "read_research_source",
+        "query_findkg",
     }
-    assert set(business.allowed_tools) == set(lead.allowed_tools)
+    assert set(business.allowed_tools) == {
+        "get_company_profile",
+        "search_research_sources",
+        "read_research_source",
+    }
     assert set(industry.allowed_tools) == {
         "search_research_sources",
         "read_research_source",
     }
     assert set(deep.allowed_tools) == set(industry.allowed_tools)
+    assert deep.max_tool_calls == 25
+    assert deep.timeout_seconds == 300
+    assert "工具阶段最多使用 180 秒" in deep.system_prompt
+    assert "当前 attempt" in deep.system_prompt
+    # A full Deep pass may use every allowed tool call and still needs one
+    # final model turn to emit its structured research brief.
+    assert deep.max_iterations >= deep.max_tool_calls + 1
     assert financial.mode == valuation.mode == lead_synthesis.mode == writer_planning.mode == "constrained"
     assert financial.allowed_tools == valuation.allowed_tools == lead_synthesis.allowed_tools == writer_planning.allowed_tools == []
     assert financial.max_iterations == valuation.max_iterations == lead_synthesis.max_iterations == writer_planning.max_iterations == 1
+
+
+def test_lead_dispatches_distinct_business_and_industry_questions_without_hard_boundaries(
+    settings,
+) -> None:
+    profiles = ProfileLoader(settings.agent_profile_dir)
+    lead = profiles.load("fundamental_lead").system_prompt
+    business = profiles.load("business_research").system_prompt
+    industry = profiles.load("industry_research").system_prompt
+
+    assert "business_scope" in lead
+    assert "industry_scope" in lead
+    assert "key_questions" in lead
+    assert "最终需要整合回答的问题" in lead
+    assert "允许研究对象和必要资料重合" in lead
+    assert "query_findkg" in lead
+    assert "不是 Evidence" in lead
+    assert "建议最多调用2次" in lead
+
+    assert "外部变量如何传导到公司" in business
+    assert "不得因为 Industry 也可能研究该对象而主动回避" in business
+    assert "不作为本 Agent 的主要研究任务" not in business
+
+    assert "宏观定价变量" in industry
+    assert "实际利率" in industry
+    assert "美元" in industry
+    assert "不得因为 Business 也可能研究该对象而主动回避" in industry
+    assert "不要在这里重复展开" not in industry
+
+    for prompt in (lead, business, industry):
+        assert "当前 attempt" in prompt
+        assert "前两轮" in prompt
+    assert "总共最多两轮" in business
+    assert "总共最多两轮" in industry
+
+
+def test_deep_prompt_preserves_unique_round_results_until_attempt_ends(
+    settings,
+) -> None:
+    deep = ProfileLoader(settings.agent_profile_dir).load("deep_research").system_prompt
+
+    assert "当前 attempt 内已经返回的全部唯一" in deep
+    assert "达到两轮检索上限后停止继续搜索" in deep
+    assert "仍可读取" in deep
+    assert "最新一轮搜索中有效" not in deep
+
+
+def test_writer_planning_only_plans_comparable_charts(settings) -> None:
+    prompt = ProfileLoader(settings.agent_profile_dir).load("writer_planning").system_prompt
+
+    assert "visual_plan 可以为空" in prompt
+    assert "comparison_mode" in prompt
+    assert "comparison_basis" in prompt
+    assert "至少两个可比较数据点" in prompt
+    assert "PE、PB、PS、DCF" in prompt
+    assert "不应中断报告" in prompt
 
 
 def test_fundamental_output_schemas_are_strict_and_registered() -> None:

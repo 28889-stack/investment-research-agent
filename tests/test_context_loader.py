@@ -196,6 +196,12 @@ def test_lead_final_review_context_stays_bounded_with_many_long_evidence_items(
             evidence_type="historical_fact",
         )
 
+    package_path = settings.artifacts_dir / run.run_id / "retrieval_package.json"
+    package = json.loads(package_path.read_text(encoding="utf-8"))
+    for item in package["items"]:
+        item["excerpt"] = "x" * 240
+    package_path.write_text(json.dumps(package, ensure_ascii=False), encoding="utf-8")
+
     profile = ProfileLoader(settings.agent_profile_dir).load("fundamental_lead")
     loader = ContextLoader(service, RuntimeRepository(session_factory), max_context_chars=30_000)
     context = loader.load_for_agent(
@@ -222,4 +228,87 @@ def test_lead_final_review_context_stays_bounded_with_many_long_evidence_items(
     assert len(json.dumps(context, ensure_ascii=False)) < 30_000
     assert "evidence" not in context["artifacts"]
     items = context["artifacts"]["retrieval_package"]["items"]
-    assert all(len(item["excerpt"]) <= 240 for item in items)
+    assert all(len(item["excerpt"]) <= 80 for item in items)
+
+
+def test_writer_context_keeps_deep_detail_but_removes_redundant_specialist_topics(
+    settings, session_factory
+):
+    from app.fundamental.workflow import FundamentalWorkflow
+    from app.runtime.pi_client import MockPiClient
+
+    service = RunService(session_factory, settings.artifacts_dir)
+    run = service.create_run(symbol="贵州茅台", analysis_type="fundamental", as_of="2026-08-05")
+    workflow = FundamentalWorkflow(settings, session_factory, pi_client=MockPiClient())
+    try:
+        workflow.run(run.run_id)
+    finally:
+        workflow.shutdown()
+
+    profile = ProfileLoader(settings.agent_profile_dir).load("fundamental_writer")
+    loader = ContextLoader(service, RuntimeRepository(session_factory), max_context_chars=30_000)
+    context = loader.load_for_agent(
+        run.run_id,
+        profile,
+        "fundamental_writer",
+        [
+            "artifact:lead_synthesis", "artifact:writer_plan", "artifact:business_research",
+            "artifact:industry_research", "artifact:deep_research", "artifact:financial_research",
+            "artifact:valuation_research", "artifact:lead_final_review", "artifact:retrieval_package",
+            "artifact:assumptions", "artifact:company_profile", "artifact:financial_metrics",
+            "artifact:valuation_result",
+        ],
+        "根据主线、论据和引用索引完成报告写作",
+        output_schema_name="fundamental_writer_output",
+    )
+
+    artifacts = context["artifacts"]
+    assert len(json.dumps(context, ensure_ascii=False)) < 30_000
+    assert "topics" not in artifacts["business_research"]
+    assert "topics" not in artifacts["industry_research"]
+    assert artifacts["deep_research"]["topics"]
+    assert all("excerpt" not in item for item in artifacts["retrieval_package"]["items"])
+    assert all(item["evidence_id"] and item["claim"] and item["url"] for item in artifacts["retrieval_package"]["items"])
+    assert "key_findings" not in artifacts["writer_plan"]
+    assert "risks" not in artifacts["writer_plan"]
+    assert "missing_information" not in artifacts["writer_plan"]
+    assert "report_outline" not in artifacts["lead_final_review"]
+    assert "conflicts" not in artifacts["lead_synthesis"]
+
+
+def test_lead_synthesis_context_uses_citation_index_without_dropping_deep_topics(
+    settings, session_factory
+):
+    from app.fundamental.workflow import FundamentalWorkflow
+    from app.runtime.pi_client import MockPiClient
+
+    service = RunService(session_factory, settings.artifacts_dir)
+    run = service.create_run(symbol="贵州茅台", analysis_type="fundamental", as_of="2026-08-05")
+    workflow = FundamentalWorkflow(settings, session_factory, pi_client=MockPiClient())
+    try:
+        workflow.run(run.run_id)
+    finally:
+        workflow.shutdown()
+
+    profile = ProfileLoader(settings.agent_profile_dir).load("lead_synthesis")
+    loader = ContextLoader(service, RuntimeRepository(session_factory), max_context_chars=30_000)
+    context = loader.load_for_agent(
+        run.run_id,
+        profile,
+        "lead_synthesis",
+        [
+            "artifact:lead_plan", "artifact:business_research", "artifact:industry_research",
+            "artifact:lead_review", "artifact:deep_research", "artifact:financial_research",
+            "artifact:valuation_research", "artifact:lead_final_review", "artifact:retrieval_package",
+            "artifact:assumptions",
+        ],
+        "生成报告主线、章节论点和资料采用说明",
+        output_schema_name="lead_synthesis_output",
+    )
+
+    artifacts = context["artifacts"]
+    assert len(json.dumps(context, ensure_ascii=False)) < 30_000
+    assert "topics" not in artifacts["business_research"]
+    assert "topics" not in artifacts["industry_research"]
+    assert artifacts["deep_research"]["topics"]
+    assert all("excerpt" not in item for item in artifacts["retrieval_package"]["items"])

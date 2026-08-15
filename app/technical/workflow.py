@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
+from app.charts.schemas import ReportVisuals
 from app.run_service import RunService
 from app.runtime.context_loader import ContextLoader
 from app.runtime.exceptions import (
@@ -50,6 +51,7 @@ class TechnicalGraphState(TypedDict, total=False):
     market_data_path: str
     indicators_path: str
     technical_research_path: str
+    technical_visuals_path: str
     kronos_result_path: str
     technical_assembly_path: str
     report_path: str
@@ -321,6 +323,7 @@ class TechnicalWorkflow:
                 "market_data_path": str(directory / "market_data.csv"),
                 "indicators_path": str(directory / "technical_indicators.json"),
                 "technical_research_path": str(output_path),
+                "technical_visuals_path": str(directory / "technical_visuals.json"),
                 "error_message": None,
             }
         except Exception as exc:
@@ -371,6 +374,7 @@ class TechnicalWorkflow:
                 "technical_research_path": str(
                     directory / "technical_research.json"
                 ),
+                "technical_visuals_path": str(directory / "technical_visuals.json"),
                 "kronos_result_path": str(output_path),
                 "error_message": None,
             }
@@ -443,6 +447,7 @@ class TechnicalWorkflow:
                 "technical_research_path": str(
                     directory / "technical_research.json"
                 ),
+                "technical_visuals_path": str(directory / "technical_visuals.json"),
                 "kronos_result_path": str(directory / "kronos_result.json"),
                 "technical_assembly_path": str(output_path),
                 "error_message": None,
@@ -458,7 +463,7 @@ class TechnicalWorkflow:
             self._enter(state["run_id"], node, "REPORTING", "生成报告", 92)
             run = self.service.get_run(state["run_id"])
             directory = self._artifact_dir(run.run_id)
-            report_path = directory / "technical_report.md"
+            report_path = directory / "technical_report.html"
             if not technical_report_is_current(run, directory):
                 report_path = generate_technical_report(run, directory)
             if not self.service.complete_run(run.run_id, report_path):
@@ -473,6 +478,7 @@ class TechnicalWorkflow:
                 "technical_research_path": str(
                     directory / "technical_research.json"
                 ),
+                "technical_visuals_path": str(directory / "technical_visuals.json"),
                 "kronos_result_path": str(directory / "kronos_result.json"),
                 "technical_assembly_path": str(
                     directory / "technical_assembly.json"
@@ -573,9 +579,11 @@ class TechnicalWorkflow:
                 "market_data.csv",
                 "technical_indicators.json",
                 "technical_research.json",
+                "technical_visuals.json",
                 "technical_chart.png",
                 "kronos_result.json",
                 "technical_assembly.json",
+                "technical_report.html",
                 "technical_report.md",
             )
             result = self._technical_research({"run_id": run.run_id})
@@ -589,6 +597,7 @@ class TechnicalWorkflow:
                 directory,
                 "kronos_result.json",
                 "technical_assembly.json",
+                "technical_report.html",
                 "technical_report.md",
             )
             result = self._kronos({"run_id": run.run_id})
@@ -600,6 +609,7 @@ class TechnicalWorkflow:
             self._discard_files(
                 directory,
                 "technical_assembly.json",
+                "technical_report.html",
                 "technical_report.md",
             )
             result = self._technical_assembly({"run_id": run.run_id})
@@ -619,11 +629,17 @@ class TechnicalWorkflow:
             indicators = TechnicalIndicators.model_validate_json(
                 (directory / "technical_indicators.json").read_text(encoding="utf-8")
             )
+            chart = (directory / "technical_chart.png").read_bytes()
+            if not chart.startswith(b"\x89PNG\r\n\x1a\n"):
+                return False
             research = TechnicalResearchOutput.model_validate_json(
                 (directory / "technical_research.json").read_text(encoding="utf-8")
             )
             self._validate_identity(indicators, run)
             self._validate_identity(research, run)
+            ReportVisuals.model_validate_json(
+                (directory / "technical_visuals.json").read_text(encoding="utf-8")
+            )
             execution = self._completed_execution(run.run_id, "technical_research")
             if execution is None or execution.tool_call_count < 3:
                 return False

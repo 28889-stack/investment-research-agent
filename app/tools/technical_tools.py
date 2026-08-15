@@ -24,6 +24,8 @@ from app.technical.market_data import (
     resolve_security,
 )
 from app.technical.schemas import TechnicalIndicators
+from app.technical.visuals import atomic_write_visuals, build_technical_visuals
+from app.charts.schemas import ReportVisuals
 
 
 class EmptyInput(BaseModel):
@@ -58,8 +60,11 @@ class TechnicalSummary(BaseModel):
     volume: dict[str, Any]
     support_resistance: dict[str, Any]
     patterns: list[str]
+    signals: list[dict[str, Any]]
     chart_generated: bool | None = None
     chart_error: str | None = None
+    visuals_generated: bool | None = None
+    visuals_error: str | None = None
 
 
 def _artifact_dir(settings: Settings, run_id: str) -> Path:
@@ -139,19 +144,21 @@ def build_technical_tools(
             script_version=settings.technical_indicator_version,
         )
         atomic_write_json(indicators, directory / "technical_indicators.json")
-        chart_generated = True
-        chart_error = None
+        visuals_path = directory / "technical_visuals.json"
+        visuals_path.unlink(missing_ok=True)
         chart_path = directory / "technical_chart.png"
         chart_path.unlink(missing_ok=True)
-        try:
-            generate_technical_chart(enriched, indicators, chart_path)
-        except Exception as exc:
-            chart_generated = False
-            chart_error = f"{type(exc).__name__}: 图表生成失败"
+        generate_technical_chart(enriched, indicators, chart_path)
+        atomic_write_visuals(
+            build_technical_visuals(enriched, indicators),
+            visuals_path,
+        )
         return _summary(
             indicators,
-            chart_generated=chart_generated,
-            chart_error=chart_error,
+            chart_generated=True,
+            chart_error=None,
+            visuals_generated=True,
+            visuals_error=None,
         )
 
     def summary_tool(
@@ -162,8 +169,22 @@ def build_technical_tools(
         indicators = TechnicalIndicators.model_validate_json(path.read_text(encoding="utf-8"))
         if indicators.data_version != run.data_version:
             raise ValueError("MARKET_DATA_INVALID: 指标数据版本不一致")
-        chart_path = path.with_name("technical_chart.png")
-        return _summary(indicators, chart_generated=chart_path.is_file(), chart_error=None)
+        visuals_path = path.with_name("technical_visuals.json")
+        visuals_generated = False
+        visuals_error = None
+        if visuals_path.is_file():
+            try:
+                ReportVisuals.model_validate_json(visuals_path.read_text(encoding="utf-8"))
+                visuals_generated = True
+            except (OSError, ValueError):
+                visuals_error = "technical_visuals.json 无法校验"
+        return _summary(
+            indicators,
+            chart_generated=(path.with_name("technical_chart.png")).is_file(),
+            chart_error=None,
+            visuals_generated=visuals_generated,
+            visuals_error=visuals_error,
+        )
 
     common = {
         "allowed_modes": {"full"},
@@ -185,7 +206,7 @@ def build_technical_tools(
     registry.register(
         ToolDefinition(
             name="calculate_technical_indicators",
-            description="读取当前任务行情，计算技术指标并生成一张技术图表",
+            description="读取当前任务行情，计算技术指标，生成必备行情全景图及实际识别形态的原生解释图",
             input_model=EmptyInput,
             output_model=TechnicalSummary,
             side_effect=True,

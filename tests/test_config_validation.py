@@ -10,7 +10,9 @@ def test_settings_expose_mvp_operations_defaults() -> None:
     assert settings.app_env == "development"
     assert settings.allow_public_bind is False
     assert settings.max_pending_runs == 20
+    assert settings.max_agent_context_chars == 50_000
     assert settings.research_search_max_results == 8
+    assert settings.findkg_data_dir.as_posix() == "data/findkg/FinDKG"
     assert settings.logs_dir.as_posix() == "logs"
     assert settings.backups_dir.as_posix() == "backups"
 
@@ -73,7 +75,7 @@ def test_live_search_aggregator_accepts_akshare_members_without_key(tmp_path) ->
         backups_dir=tmp_path / "backups",
         pi_runtime_mode="live",
         pi_model_provider="deepseek",
-        pi_model="deepseek-v4-flash",
+        pi_model="deepseek-v4-pro",
         pi_api_key_env_name="DEEPSEEK_API_KEY",
         kronos_mode="live",
         kronos_model_name="NeoQuasar/Kronos-mini",
@@ -106,7 +108,7 @@ def test_deepseek_and_official_crawler_live_configuration_is_accepted(tmp_path) 
         app_env="production",
         pi_runtime_mode="live",
         pi_model_provider="deepseek",
-        pi_model="deepseek-v4-flash",
+        pi_model="deepseek-v4-pro",
         pi_api_key_env_name="DEEPSEEK_API_KEY",
         kronos_mode="live",
         kronos_model_name="NeoQuasar/Kronos-mini",

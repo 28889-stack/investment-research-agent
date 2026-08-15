@@ -69,7 +69,15 @@ def test_technical_research_calls_three_tools_and_saves_typed_output(
     directory = settings.artifacts_dir / run.run_id
     assert (directory / "market_data.csv").is_file()
     assert (directory / "technical_indicators.json").is_file()
-    assert (directory / "technical_chart.png").is_file()
+    assert (directory / "technical_visuals.json").is_file()
+    visuals = json.loads((directory / "technical_visuals.json").read_text())
+    indicators = json.loads((directory / "technical_indicators.json").read_text())
+    rendered_names = {
+        annotation["label"]
+        for chart in visuals["charts"]
+        for annotation in chart["annotations"]
+    }
+    assert rendered_names == set(indicators["patterns"])
 
 
 def test_technical_assembly_receives_only_validated_artifacts_and_uses_no_tools(

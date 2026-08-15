@@ -31,8 +31,8 @@ DEPENDENCIES = {
     "lead_final_review": ["business_research", "industry_research", "deep_research", "financial_data", "financial_metrics", "financial_research", "valuation_research", "retrieval_package"],
     "lead_synthesis": ["lead_final_review", "business_research", "industry_research", "deep_research", "financial_research", "valuation_research", "retrieval_package", "assumptions"],
     "writer_plan": ["lead_synthesis", "lead_final_review", "financial_metrics", "valuation_result"],
-    "fundamental_writer": ["lead_synthesis", "writer_plan", "business_research", "industry_research", "deep_research", "financial_research", "valuation_research", "lead_final_review", "retrieval_package", "evidence", "assumptions"],
-    "report_visuals": ["financial_metrics", "valuation_result"],
+    "report_visuals": ["writer_plan", "financial_data", "financial_metrics", "valuation_result", "evidence", "assumptions"],
+    "fundamental_writer": ["lead_synthesis", "writer_plan", "report_visuals", "business_research", "industry_research", "deep_research", "financial_research", "valuation_research", "lead_final_review", "retrieval_package", "evidence", "assumptions"],
     "fundamental_report": ["fundamental_writer", "report_visuals", "financial_metrics", "valuation_result", "evidence", "assumptions"],
 }
 
@@ -40,7 +40,7 @@ RESULT_ORDER = [
     "lead_plan", "company_profile", "evidence", "business_research",
     "industry_research", "lead_review", "deep_research", "retrieval_package", "financial_data", "financial_metrics",
     "financial_research", "assumptions", "valuation_result", "valuation_research",
-    "lead_final_review", "lead_synthesis", "writer_plan", "fundamental_writer", "report_visuals", "fundamental_report",
+    "lead_final_review", "lead_synthesis", "writer_plan", "report_visuals", "fundamental_writer", "fundamental_report",
 ]
 # Evidence and Assumption are the only intentionally editable inputs. Other
 # zero-dependency results are deterministic/generated and must be rebuilt when

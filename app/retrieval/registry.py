@@ -28,6 +28,10 @@ def get_search_provider(name: str) -> ResearchSearchProvider:
         from app.retrieval.tavily import TavilySearchProvider
 
         return TavilySearchProvider()
+    if name == "keenable":
+        from app.retrieval.keenable import KeenableSearchProvider
+
+        return KeenableSearchProvider()
     if name == "firecrawl":
         from app.retrieval.firecrawl import FirecrawlSearchProvider
 
@@ -50,6 +54,7 @@ PROVIDER_SOURCE_KINDS: dict[str, str] = {
     "akshare_news": "news",
     "akshare_reports": "research_report",
     "tavily": "web",
+    "keenable": "web",
     "firecrawl": "web",
 }
 

@@ -322,11 +322,11 @@ def test_jina_read_recovers_on_second_attempt_after_transient(
 
 
 # ---------------------------------------------------------------------------
-# Bounded stream: oversized response fails (no unbounded read)
+# Bounded stream: oversized response is truncated (no unbounded read)
 # ---------------------------------------------------------------------------
 
 
-def test_jina_read_rejects_oversized_response(settings, monkeypatch) -> None:
+def test_jina_read_truncates_oversized_response(settings, monkeypatch) -> None:
     live = settings.model_copy(
         update={"research_reader": "jina", "research_max_source_chars": 1_000}
     )
@@ -359,8 +359,11 @@ def test_jina_read_rejects_oversized_response(settings, monkeypatch) -> None:
     monkeypatch.setattr("app.retrieval.reader.httpx.Client", Client)
     monkeypatch.setattr("app.retrieval.reader.is_safe_public_url", lambda _url: True)
 
-    with pytest.raises(ResearchSourceError, match="来源响应过大"):
-        read_with_reader("https://example.com/huge", live)
+    result = read_with_reader("https://example.com/huge", live)
+
+    assert result
+    assert len(result) == live.research_max_source_chars
+    assert result == "紫金矿业" * 250
 
 
 # ---------------------------------------------------------------------------

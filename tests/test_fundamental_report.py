@@ -172,3 +172,32 @@ def test_report_emits_self_contained_financial_html_with_canvas_visuals_and_opti
     assert "优化建议" in html
     assert "缺失信息" not in html
     assert "https://cdn" not in html
+    assert "图 1：" in html
+
+
+def test_html_report_renders_writer_selected_thematic_sections(settings, session_factory) -> None:
+    run, directory = _prepared_directory(settings, session_factory)
+    writer = json.loads((directory / "fundamental_writer.json").read_text(encoding="utf-8"))
+    writer["sections"] = [
+        {
+            "section_id": "capacity-ramp",
+            "title": "产能爬坡是经营弹性的观察重点",
+            "main_claim": "资产投放的节奏决定增长质量。",
+            "body": "专题正文应围绕已验证的项目资料、经营数据和风险观察展开连续论证，而不是重复业务摘要。该段文字由 Writer 依据获准资料组织。",
+            "evidence_ids": ["ev_001"],
+            "assumption_ids": [],
+            "observation_points": ["投产进度", "达产效率"],
+        }
+    ]
+    (directory / "fundamental_writer.json").write_text(
+        json.dumps(writer, ensure_ascii=False), encoding="utf-8"
+    )
+
+    generate_fundamental_report(
+        directory, run_id=run.run_id, workflow_version="fundamental_v1", writer_profile_version="v1"
+    )
+
+    html = (directory / "fundamental_report.html").read_text(encoding="utf-8")
+    assert "产能爬坡是经营弹性的观察重点" in html
+    assert "该段文字由 Writer 依据获准资料组织" in html
+    assert "专题观察" in html

@@ -83,8 +83,9 @@ def test_worker_completes_run_and_generates_report(settings, session_factory, ca
     report_path = Path(run.report_path)
     assert report_path.exists()
     report = report_path.read_text(encoding="utf-8")
-    assert "# 个股基本面分析报告" in report
-    assert "## 九、研究证据" in report
+    assert report.startswith("<!doctype html>")
+    assert "个股基本面分析报告" in report
+    assert "研究证据与来源索引" in report
     assert "买入" not in report
     assert "卖出" not in report
     assert service.list_events(run_id)[-1].event_type == "RUN_COMPLETED"
@@ -106,8 +107,8 @@ def test_worker_routes_technical_run_to_five_node_workflow(settings, session_fac
     run = service.get_run(run_id)
     assert run.status == "COMPLETED"
     assert run.workflow_name == "technical_v1"
-    assert run.report_path and Path(run.report_path).name == "technical_report.md"
-    assert "# 个股技术面分析报告" in Path(run.report_path).read_text(encoding="utf-8")
+    assert run.report_path and Path(run.report_path).name == "technical_report.html"
+    assert "<h1>个股技术面分析报告</h1>" in Path(run.report_path).read_text(encoding="utf-8")
     assert any(record.message == "Technical workflow completed" for record in caplog.records)
 
 

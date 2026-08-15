@@ -238,13 +238,16 @@ class MockPiClient:
         if profile["profile_id"] == "fundamental_lead" and node == "lead_review":
             artifacts = context["artifacts"]
             missing = list(artifacts["business_research"]["missing_information"]) + list(artifacts["industry_research"]["missing_information"])
-            return json.dumps({"symbol": symbol, "business_status": "accepted", "industry_status": "accepted_with_gaps" if missing else "accepted", "key_findings": ["品牌渠道优势与行业周期风险并存"], "conflicts": ["业务稳定性与行业周期波动需继续验证"], "financial_questions": ["自由现金流能否支持长期估值"], "missing_information": missing, "followup_research_tasks": ["补充核验自由现金流与资本开支的关系"]}, ensure_ascii=False)
+            return json.dumps({"symbol": symbol, "business_status": "accepted", "industry_status": "accepted_with_gaps" if missing else "accepted", "key_findings": ["品牌渠道优势与行业周期风险并存"], "conflicts": ["业务稳定性与行业周期波动需继续验证"], "financial_questions": ["自由现金流能否支持长期估值"], "missing_information": missing, "followup_research_tasks": ["补充核验自由现金流与资本开支的关系"], "deep_research_tasks": [{"task_id": "deep_01", "topic": "自由现金流与资本开支", "scope": "核验现金流质量及其对估值假设的影响", "research_questions": ["自由现金流能否覆盖资本开支并支持长期估值"], "priority_fact_types": ["historical_fact"], "known_material": ["品牌渠道优势与行业周期风险并存"], "excluded_claims": ["业务稳定性与行业周期波动需继续验证"]}]}, ensure_ascii=False)
         if profile["profile_id"] == "deep_research":
             artifacts = context["artifacts"]
             missing = list(artifacts["lead_review"]["missing_information"])
-            sources = tool_handler("search_research_sources", {"query": "补充核验 Lead Review 缺失项"})
+            cards = artifacts["lead_review"].get("deep_research_tasks", [])
+            task_card_id = cards[0]["task_id"] if cards else "deep_01"
+            sources = tool_handler("search_research_sources", {"query": "补充核验 Lead Review 缺失项", "task_card_id": task_card_id})
             evidence = tool_handler("read_research_source", {"result_id": sources["items"][0]["result_id"], "claim": "补充检索对 Lead 缺失项的核验", "evidence_type": "historical_fact"})
-            return json.dumps({"symbol": symbol, "summary": "已根据 Lead Review 的补充任务完成一轮深度检索。", "findings": [{"claim": "补充检索对核心缺失项进行了来源核验。", "evidence_ids": [evidence["evidence_id"]], "confidence": "medium"}], "risks": [], "missing_information": missing}, ensure_ascii=False)
+            topics = [{"task_id": card["task_id"], "topic": card["topic"], "summary": "已围绕该专题完成一轮来源核验，并保留待补充的口径。", "findings": [{"claim": "补充检索对核心缺失项进行了来源核验。", "evidence_ids": [evidence["evidence_id"]], "confidence": "medium"}], "risks": [], "missing_information": []} for card in cards]
+            return json.dumps({"symbol": symbol, "summary": "已根据 Lead Review 的专题任务卡完成补充检索。", "findings": [{"claim": "补充检索对核心缺失项进行了来源核验。", "evidence_ids": [evidence["evidence_id"]], "confidence": "medium"}], "risks": [], "missing_information": missing, "topics": topics}, ensure_ascii=False)
         if profile["profile_id"] == "financial_research":
             return json.dumps({"symbol": symbol, "summary": "历史财务数据显示盈利与现金流需结合增长假设解读。", "growth_analysis": "关注收入与归母净利涨幅的匹配。", "profitability_analysis": "关注利润率和净资产收益率的持续性。", "cash_flow_analysis": "经营现金流与自由现金流是估值的关键输入。", "balance_sheet_analysis": "现金与负债结构影响股权价值。", "earnings_drivers": ["产品结构", "渠道效率", "需求变化"], "assumptions": [{"variable": "fcf_growth", "value": 0.08, "period": "FY2026-FY2030", "source": "financial_research"}, {"variable": "terminal_growth", "value": 0.03, "period": "terminal", "source": "financial_research"}, {"variable": "discount_rate", "value": 0.10, "period": "forecast", "source": "financial_research"}], "risks": ["假设对估值结果敏感"], "evidence_ids": ["ev_001"], "confidence": "medium"}, ensure_ascii=False)
         if profile["profile_id"] == "valuation_research":
@@ -269,11 +272,69 @@ class MockPiClient:
             return json.dumps({"symbol": symbol, "as_of": as_of, "report_mainline": artifacts["lead_final_review"]["research_thesis"], "executive_focus": "业务质量、周期、财务质量与估值假设的联动。", "sections": sections, "key_findings": artifacts["lead_final_review"]["key_findings"], "conflicts": artifacts["lead_final_review"]["conflicts"], "risks": ["公开资料与预测假设存在局限"], "missing_information": artifacts["lead_final_review"]["missing_information"]}, ensure_ascii=False)
         if profile["profile_id"] == "writer_planning":
             synthesis = context["artifacts"]["lead_synthesis"]
-            return json.dumps({"symbol": symbol, "as_of": as_of, "title": "个股基本面分析报告", "executive_focus": synthesis["executive_focus"], "sections": [{"section": item["section"], "purpose": item["main_point"], "narrative_order": index, "allowed_evidence_ids": item["allowed_evidence_ids"], "allowed_assumption_ids": item["allowed_assumption_ids"], "visual_emphasis": "trend" if item["section"] == "financial" else ("valuation" if item["section"] == "valuation" else "none")} for index, item in enumerate(synthesis["sections"], 1)], "key_findings": synthesis["key_findings"], "risks": synthesis["risks"], "missing_information": synthesis["missing_information"]}, ensure_ascii=False)
+            legacy_sections = [{"section": item["section"], "purpose": item["main_point"], "narrative_order": index, "allowed_evidence_ids": item["allowed_evidence_ids"], "allowed_assumption_ids": item["allowed_assumption_ids"], "visual_emphasis": "trend" if item["section"] == "financial" else ("valuation" if item["section"] == "valuation" else "none")} for index, item in enumerate(synthesis["sections"], 1)]
+            composition = [{"section_id": f"{item['section']}-analysis", "title": {"business": "业务基础与经营执行", "industry": "行业周期与竞争结构", "financial": "财务质量与增长验证", "valuation": "估值假设与敏感性"}[item["section"]], "purpose": item["main_point"], "narrative_order": index, "allowed_evidence_ids": item["allowed_evidence_ids"], "allowed_assumption_ids": item["allowed_assumption_ids"], "writer_group": ("financial" if item["section"] == "valuation" else item["section"]), "visual_components": (["chart", "table"] if item["section"] == "financial" else (["chart", "callout"] if item["section"] == "valuation" else ["callout"]))} for index, item in enumerate(synthesis["sections"], 1)]
+            by_section = {item["section"]: item for item in synthesis["sections"]}
+            visual_plan = [
+                {"visual_id": "visual-performance", "section_id": "financial-analysis", "plugin_id": "financial_performance_trend", "analytical_question": "收入增长是否转化为利润增长", "source_mode": "structured", "metric_keys": ["revenue", "net_profit_attributable"], "allowed_evidence_ids": [], "allowed_assumption_ids": [], "preferred_chart_type": "combo", "unit_hint": "财务数据单位", "placement": "after_claim", "caption_focus": "比较经营规模与归母利润的变化方向", "comparison_mode": "time_series", "comparison_basis": "比较同一财务口径下收入与归母净利润的跨期变化", "priority": 1},
+                {"visual_id": "visual-profitability", "section_id": "financial-analysis", "plugin_id": "profitability_quality", "analytical_question": "增长质量和股东回报如何变化", "source_mode": "structured", "metric_keys": ["gross_margin", "net_margin", "roe"], "allowed_evidence_ids": [], "allowed_assumption_ids": [], "preferred_chart_type": "line", "unit_hint": "比率", "placement": "after_body", "caption_focus": "观察利润率与 ROE 的同步性", "comparison_mode": "time_series", "comparison_basis": "比较利润率与 ROE 在相同历史期间内的变化", "priority": 2},
+                {"visual_id": "visual-cashflow", "section_id": "financial-analysis", "plugin_id": "cashflow_capex", "analytical_question": "利润是否形成可持续的现金回报", "source_mode": "structured", "metric_keys": ["operating_cash_flow", "capital_expenditure", "free_cash_flow"], "allowed_evidence_ids": [], "allowed_assumption_ids": [], "preferred_chart_type": "combo", "unit_hint": "财务数据单位", "placement": "after_body", "caption_focus": "将经营现金流、资本开支与自由现金流联系观察", "comparison_mode": "time_series", "comparison_basis": "比较经营现金流、资本开支和自由现金流的跨期变化", "priority": 2},
+            ]
+            business_evidence = by_section.get("business", {}).get("allowed_evidence_ids", [])
+            if business_evidence:
+                visual_plan.append({"visual_id": "visual-business-mix", "section_id": "business-analysis", "plugin_id": "business_mix", "analytical_question": "业务结构如何变化", "source_mode": "evidence", "metric_keys": ["业务占比"], "allowed_evidence_ids": business_evidence, "allowed_assumption_ids": [], "preferred_chart_type": "stacked_bar", "unit_hint": "%", "placement": "after_body", "caption_focus": "仅呈现可在 Evidence 原文中逐点核验的数据", "comparison_mode": "composition", "comparison_basis": "比较统一占比口径下不同业务或期间的结构变化", "priority": 4})
+            return json.dumps({"symbol": symbol, "as_of": as_of, "title": "个股基本面分析报告", "executive_focus": synthesis["executive_focus"], "sections": legacy_sections, "report_composition": composition, "visual_plan": visual_plan, "key_findings": synthesis["key_findings"], "risks": synthesis["risks"], "missing_information": synthesis["missing_information"]}, ensure_ascii=False)
+        if profile["profile_id"] == "chart_data_extractor":
+            return json.dumps({"symbol": symbol, "as_of": as_of, "candidates": []}, ensure_ascii=False)
+        if profile["profile_id"] == "writer_section":
+            group = context["section_group"]
+            assignments = context["artifacts"]["writer_assignment"]
+            written_sections = [{
+                "section_id": item["section_id"],
+                "title": item["title"],
+                "main_claim": item["purpose"],
+                "body": f"{item['purpose']} 本专题依据分配给当前章节 Writer 的已验证材料展开，围绕核心判断、事实依据、经营影响和持续观察形成连续论证。所有数字与引用均受当前材料包约束，不跨章节扩写。",
+                "evidence_ids": item["allowed_evidence_ids"],
+                "assumption_ids": item["allowed_assumption_ids"],
+                "observation_points": ["后续披露中的关键经营指标", "专题相关外部条件变化"],
+            } for item in assignments]
+            return json.dumps({
+                "symbol": symbol, "as_of": as_of, "section_group": group,
+                "sections": written_sections,
+            }, ensure_ascii=False)
+        if profile["profile_id"] == "final_synthesis":
+            artifacts = context["artifacts"]
+            sections_by_id = {
+                section["section_id"]: section
+                for output in artifacts["writer_sections"].values()
+                for section in output["sections"]
+            }
+            planned = artifacts["writer_plan"].get("report_composition", [])
+            section_order = [
+                item["section_id"] for item in sorted(
+                    planned, key=lambda item: item["narrative_order"]
+                )
+                if item["section_id"] in sections_by_id
+            ]
+            for section_id in sections_by_id:
+                if section_id not in section_order:
+                    section_order.append(section_id)
+            return json.dumps({
+                "symbol": symbol,
+                "as_of": as_of,
+                "section_order": section_order,
+                "text_edits": [],
+                "transitions": [],
+                "executive_summary": artifacts["lead_synthesis"]["executive_focus"],
+                "conclusion": "全文应沿着公司业务、行业环境与财务兑现的主线连续理解。",
+                "edit_summary": ["按 Writer Plan 组装三个 Writer 的专题稿"],
+            }, ensure_ascii=False)
         if profile["profile_id"] == "fundamental_writer":
             artifacts = context["artifacts"]
             needs_more = self.scenario == "writer_needs_more_research"
             missing = ["缺少主要业务分部收入数据"] if needs_more else []
+            composition = artifacts["writer_plan"].get("report_composition", [])
+            written_sections = [{"section_id": item["section_id"], "title": item["title"], "main_claim": item["purpose"], "body": f"{item['purpose']} 本专题依据已获准的研究材料展开，重点不是重复前序摘要，而是把已验证事实放入经营、行业与财务质量的共同框架中解释。读者应结合相关数据口径、资料时点和后续披露理解这一判断。", "evidence_ids": item["allowed_evidence_ids"], "assumption_ids": item["allowed_assumption_ids"], "observation_points": ["后续披露中的量价与经营指标", "专题相关的外部条件变化"]} for item in composition]
             return json.dumps({
                 "symbol": symbol,
                 "as_of": as_of,
@@ -288,7 +349,8 @@ class MockPiClient:
                 "risks": artifacts["business_research"]["risks"] + artifacts["industry_research"]["risks"] + artifacts["financial_research"]["risks"] + artifacts["valuation_research"]["risks"],
                 "missing_information": missing,
                 "conclusion": "研究结论应结合证据、假设、风险和数据限制审慎理解。",
-                "disclaimer": "本输出不构成投资建议、交易指令或收益承诺。"
+                "disclaimer": "本输出不构成投资建议、交易指令或收益承诺。",
+                "sections": written_sections,
             }, ensure_ascii=False)
         if profile["mode"] == "full":
             findings: list[dict[str, Any]] = []

@@ -15,9 +15,14 @@ from app.fundamental.schemas import (
     FinancialData,
     FinancialMetrics,
     FundamentalWriterOutput,
+    PlannedVisual,
     ValuationResult,
     validate_references,
 )
+from app.charts.schemas import ChartSpec, ReportVisuals
+from app.charts.runtime import REPORT_CHART_RUNTIME
+from app.charts.styles import FUNDAMENTAL_VISION_STYLE
+from app.fundamental.visuals import build_default_fundamental_chart_registry
 
 
 DISCLAIMER = """本报告基于公开资料、历史财务数据、研究假设及简化估值模型生成。
@@ -78,14 +83,16 @@ def generate_fundamental_report(
     evidence = _load(EvidenceCollection, directory / "evidence.json")
     assumptions = _load(AssumptionStore, directory / "assumptions.json")
     writer = _load(FundamentalWriterOutput, directory / "fundamental_writer.json")
-    if writer.status != "completed":
-        raise ValueError("Writer 尚未完成正式报告材料")
+    if writer.status not in {"completed", "needs_more_research"}:
+        raise ValueError("Writer 状态无效，不能生成正式报告材料")
     if writer.symbol != company.symbol or writer.as_of != company.as_of:
         raise ValueError("Writer 身份与当前报告不一致")
     validate_references(writer, evidence, assumptions)
 
     referenced_ids: list[str] = []
     for section in (writer.business, writer.industry, writer.financial, writer.valuation):
+        referenced_ids.extend(section.evidence_ids)
+    for section in writer.sections:
         referenced_ids.extend(section.evidence_ids)
     referenced_ids = list(dict.fromkeys(referenced_ids))
     evidence_by_id = {item.id: item for item in evidence.items}
@@ -302,40 +309,57 @@ def _write_financial_html_report(
     report_text: str,
 ) -> None:
     periods = data.periods
-    labels = [item.period for item in periods]
-    visuals = {
-        "version": "financial_canvas_v1",
-        "charts": [
-            {
-                "id": "performance",
-                "title": "经营规模与盈利趋势",
-                "labels": labels,
-                "series": [
-                    {"name": "营业收入", "values": [item.revenue for item in periods], "color": "#4cc9f0"},
-                    {"name": "归母净利润", "values": [item.net_profit_attributable for item in periods], "color": "#f9c74f"},
-                ],
-            },
-            {
-                "id": "quality",
-                "title": "利润率与现金流质量",
-                "labels": labels,
-                "series": [
-                    {"name": "净利率", "values": [metrics.profitability.get(period, {}).get("net_margin") for period in labels], "color": "#80ed99"},
-                    {"name": "自由现金流", "values": [metrics.cash_flow.get(period, {}).get("free_cash_flow") for period in labels], "color": "#ff9f1c"},
-                ],
-            },
-        ],
-        "valuation": {
-            "pe": valuation.relative.pe.value if valuation.relative.pe.status == "available" else None,
-            "pb": valuation.relative.pb.value if valuation.relative.pb.status == "available" else None,
-            "ps": valuation.relative.ps.value if valuation.relative.ps.status == "available" else None,
-            "dcf": valuation.dcf.per_share_value if valuation.dcf.status == "available" else None,
-        },
-    }
     visuals_path = directory / "report_visuals.json"
-    visuals_tmp = visuals_path.with_name(f".{visuals_path.name}.tmp")
-    visuals_tmp.write_text(json.dumps(visuals, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    os.replace(visuals_tmp, visuals_path)
+    if visuals_path.is_file():
+        visuals_model = ReportVisuals.model_validate_json(
+            visuals_path.read_text(encoding="utf-8")
+        )
+    else:
+        # Compatibility for direct report generation outside the workflow.
+        fallback_plans = [
+            PlannedVisual(
+                visual_id="visual-performance", section_id="financial-analysis",
+                plugin_id="financial_performance_trend",
+                analytical_question="经营规模与盈利趋势",
+                source_mode="structured",
+                metric_keys=["revenue", "net_profit_attributable"],
+                preferred_chart_type="combo", unit_hint=data.unit,
+                caption_focus="比较收入与归母净利润的变化方向",
+                comparison_mode="time_series",
+                comparison_basis="比较同一财务口径下收入与归母净利润的跨期变化",
+            ),
+            PlannedVisual(
+                visual_id="visual-profitability", section_id="financial-analysis",
+                plugin_id="profitability_quality",
+                analytical_question="利润率与股东回报趋势",
+                source_mode="structured",
+                metric_keys=["gross_margin", "net_margin", "roe"],
+                preferred_chart_type="line", unit_hint="比率",
+                caption_focus="观察利润率与 ROE 的变化",
+                comparison_mode="time_series",
+                comparison_basis="比较利润率与 ROE 在相同历史期间内的变化",
+            ),
+        ]
+        visuals_model = build_default_fundamental_chart_registry().materialize(
+            fallback_plans,
+            {
+                "financial_data": data.model_dump(mode="json"),
+                "financial_metrics": metrics.model_dump(mode="json"),
+                "valuation_result": valuation.model_dump(mode="json"),
+            },
+        )
+        visuals_tmp = visuals_path.with_name(f".{visuals_path.name}.tmp")
+        visuals_tmp.write_text(
+            visuals_model.model_dump_json(), encoding="utf-8"
+        )
+        os.replace(visuals_tmp, visuals_path)
+    visuals = visuals_model.model_dump(mode="json")
+    valuation_snapshot = {
+        "pe": valuation.relative.pe.value if valuation.relative.pe.status == "available" else None,
+        "pb": valuation.relative.pb.value if valuation.relative.pb.status == "available" else None,
+        "ps": valuation.relative.ps.value if valuation.relative.ps.status == "available" else None,
+        "dcf": valuation.dcf.per_share_value if valuation.dcf.status == "available" else None,
+    }
     latest = periods[-1]
     latest_period = latest.period
     latest_growth = metrics.growth.get(latest_period, {})
@@ -349,18 +373,51 @@ def _write_financial_html_report(
         f"<li>{html.escape(item.variable)}：{html.escape(str(item.value))}（{html.escape(item.period)}）</li>"
         for item in assumptions.items
     ) or "<li>无</li>"
+    generated_charts = [chart for chart in visuals_model.charts if chart.status == "generated"]
+    chart_numbers = {
+        chart.chart_id: index for index, chart in enumerate(generated_charts, 1)
+    }
+
+    def charts_for(section_id: str, placement: str) -> str:
+        return "".join(
+            _chart_card(chart, chart_numbers[chart.chart_id])
+            for chart in generated_charts
+            if chart.section_id == section_id and chart.placement == placement
+        )
+
+    if writer.sections:
+        rendered_section_ids = {section.section_id for section in writer.sections}
+        thematic_sections_html = "".join(
+            f'''{charts_for(section.section_id, "before_section")}<section class="thematic-section">
+<div class="section-heading"><span>{index:02d}</span><h2>{html.escape(section.title)}</h2></div>
+<p class="section-claim">{html.escape(section.main_claim)}</p>
+{charts_for(section.section_id, "after_claim")}
+{''.join(f'<p>{html.escape(paragraph)}</p>' for paragraph in section.body.splitlines() if paragraph.strip())}
+{charts_for(section.section_id, "after_body")}
+<div class="observation"><strong>专题观察</strong><ul>{''.join(f'<li>{html.escape(item)}</li>' for item in section.observation_points) or '<li>结合后续披露持续验证。</li>'}</ul></div>
+</section>'''
+            for index, section in enumerate(writer.sections, 1)
+        )
+    else:
+        rendered_section_ids = set()
+        thematic_sections_html = f'''<section class="thematic-section"><div class="section-heading"><span>01</span><h2>商业模式与业务结构</h2></div><p>{html.escape(writer.business.summary)}</p></section>
+<section class="thematic-section"><div class="section-heading"><span>02</span><h2>行业与产业链分析</h2></div><p>{html.escape(writer.industry.summary)}</p></section>
+<section class="thematic-section"><div class="section-heading"><span>03</span><h2>财务表现</h2></div><p>{html.escape(writer.financial.summary)}</p></section>
+<section class="thematic-section"><div class="section-heading"><span>04</span><h2>估值分析</h2></div><p>{html.escape(writer.valuation.summary)}</p></section>'''
+    orphan_charts_html = "".join(
+        _chart_card(chart, chart_numbers[chart.chart_id])
+        for chart in generated_charts
+        if chart.section_id not in rendered_section_ids
+    )
     document = f'''<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(company.company_name)} · 基本面分析报告</title><style>{_FINANCIAL_REPORT_STYLE}</style></head>
 <body><main class="report-shell" id="fundamental-report" data-report-visuals="{attr_visuals}">
-<header class="report-hero"><div><p class="eyebrow">EQUITY RESEARCH · FUNDAMENTAL</p><h1>个股基本面分析报告</h1><p>{html.escape(company.company_name)}（{html.escape(company.symbol)}） · {html.escape(company.industry)} · 数据截止 {html.escape(company.as_of.isoformat())}</p></div><div class="hero-tag">公开资料研究<br><span>非投资建议</span></div></header>
+<header class="report-hero"><div><p class="eyebrow">基本面研究</p><h1>个股基本面分析报告</h1><p>{html.escape(company.company_name)}（{html.escape(company.symbol)}） · {html.escape(company.industry)} · 数据截止 {html.escape(company.as_of.isoformat())}</p></div><div class="hero-tag">公开资料研究<br><span>非投资建议</span></div></header>
 <section class="summary-grid"><article><h2>研究摘要</h2><p>{html.escape(writer.executive_summary)}</p><p class="mainline">{html.escape(writer.conclusion)}</p></article><aside><h2>核心结论</h2><ul>{''.join(f'<li>{html.escape(item)}</li>' for item in writer.key_findings)}</ul></aside></section>
 <section class="kpi-grid">{card('营业收入', latest.revenue, f'{latest_period} · 同比 {_value(latest_growth.get("revenue_yoy"))}')} {card('归母净利润', latest.net_profit_attributable, f'同比 {_value(latest_growth.get("net_profit_attributable_yoy"))}')} {card('净利率', latest_profit.get('net_margin'), '盈利质量')} {card('自由现金流', metrics.cash_flow.get(latest_period, {}).get('free_cash_flow'), '现金流质量')}</section>
-<section class="section"><div class="section-heading"><span>01</span><h2>商业模式与业务结构</h2></div><p>{html.escape(writer.business.summary)}</p></section>
-<section class="section"><div class="section-heading"><span>02</span><h2>行业与产业链分析</h2></div><p>{html.escape(writer.industry.summary)}</p></section>
-<section class="chart-grid"><article class="chart-card"><h2>经营规模与盈利趋势</h2><canvas data-chart="performance" aria-label="经营规模与盈利趋势"></canvas></article><article class="chart-card"><h2>利润率与现金流质量</h2><canvas data-chart="quality" aria-label="利润率与现金流质量"></canvas></article></section>
-<section class="section"><div class="section-heading"><span>03</span><h2>财务表现</h2></div><p>{html.escape(writer.financial.summary)}</p><div class="metric-table"><span>PE <b>{html.escape(_value(visuals['valuation']['pe']))}</b></span><span>PB <b>{html.escape(_value(visuals['valuation']['pb']))}</b></span><span>PS <b>{html.escape(_value(visuals['valuation']['ps']))}</b></span><span>DCF 每股价值 <b>{html.escape(_value(visuals['valuation']['dcf']))}</b></span></div></section>
-<section class="section"><div class="section-heading"><span>04</span><h2>估值分析</h2></div><p>{html.escape(writer.valuation.summary)}</p><p>{html.escape(ASSUMPTION_WARNING)}</p><ul>{assumptions_html}</ul></section>
+{thematic_sections_html}{orphan_charts_html}
+<section class="section"><div class="section-heading"><span>DATA</span><h2>财务与估值数据</h2></div><div class="metric-table"><span>PE <b>{html.escape(_value(valuation_snapshot['pe']))}</b></span><span>PB <b>{html.escape(_value(valuation_snapshot['pb']))}</b></span><span>PS <b>{html.escape(_value(valuation_snapshot['ps']))}</b></span><span>DCF 每股价值 <b>{html.escape(_value(valuation_snapshot['dcf']))}</b></span></div><p>{html.escape(ASSUMPTION_WARNING)}</p><ul>{assumptions_html}</ul></section>
 <section class="section risk"><div class="section-heading"><span>05</span><h2>风险与分歧</h2></div><ul>{''.join(f'<li>{html.escape(item)}</li>' for item in writer.risks + writer.conflicts)}</ul></section>
 <section class="section advice"><div class="section-heading"><span>06</span><h2>优化建议</h2></div><p>以下事项可用于后续迭代研究深度和材料覆盖，不影响本报告已完成章节的阅读与判断。</p><ul>{advice_html}</ul></section>
 <details class="evidence"><summary>研究证据与来源索引</summary><ul>{evidence_html}</ul></details><footer><p>{html.escape(DISCLAIMER)}</p><p>报告正文由已校验研究产物组织；图表仅使用受信财务、指标与估值数据。</p></footer>
@@ -371,17 +428,27 @@ def _write_financial_html_report(
     os.replace(html_tmp, html_path)
 
 
-_FINANCIAL_REPORT_STYLE = """
-:root{--ink:#0b172a;--navy:#112b4d;--paper:#f5f7fa;--panel:#fff;--line:#dbe3ed;--muted:#637287;--cyan:#4cc9f0;--gold:#f9c74f}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}.report-shell{max-width:1180px;margin:0 auto;padding:36px 24px 64px}.report-hero{background:linear-gradient(135deg,#0d223d,#153d67);color:#fff;padding:44px;display:flex;justify-content:space-between;gap:24px}.eyebrow{letter-spacing:.14em;font-size:11px;color:#9edff1;margin:0}.report-hero h1{font-size:36px;letter-spacing:-.04em;margin:8px 0}.hero-tag{border:1px solid #6e9fc9;padding:12px 16px;height:max-content;text-align:right}.hero-tag span{font-size:12px;color:#bdd1e5}.summary-grid,.chart-grid{display:grid;grid-template-columns:1.5fr 1fr;gap:18px;margin:18px 0}.summary-grid article,.summary-grid aside,.section,.chart-card,.evidence{background:var(--panel);border:1px solid var(--line);padding:24px}.summary-grid h2,.chart-card h2{font-size:16px;margin:0 0 12px}.mainline{border-left:3px solid var(--cyan);padding-left:12px}.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}.kpi{background:var(--panel);border-top:3px solid var(--navy);padding:16px}.kpi span,.kpi small{display:block;color:var(--muted);font-size:12px}.kpi strong{display:block;font-size:22px;margin:4px 0;overflow-wrap:anywhere}.section{margin:18px 0}.section-heading{display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line);margin-bottom:14px;padding-bottom:10px}.section-heading span{color:#fff;background:var(--navy);font-size:11px;padding:2px 7px}.section-heading h2{font-size:18px;margin:0}.chart-card canvas{height:260px;width:100%;display:block}.metric-table{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);margin-top:16px}.metric-table span{padding:12px 8px;border-right:1px solid var(--line);color:var(--muted);font-size:12px}.metric-table b{display:block;color:var(--ink);font-size:17px}.risk{border-left:3px solid #d97706}.advice{border-left:3px solid #2563eb}.advice p{color:var(--muted)}details summary{cursor:pointer;font-weight:650}footer{color:var(--muted);font-size:12px;padding:16px 4px}@media(max-width:760px){.report-hero,.summary-grid,.chart-grid{display:block}.hero-tag{margin-top:20px;text-align:left}.kpi-grid{grid-template-columns:repeat(2,1fr)}.metric-table{grid-template-columns:repeat(2,1fr)}.report-shell{padding:0}.report-hero{padding:28px}.section,.summary-grid article,.summary-grid aside,.chart-card,.evidence{border-left:0;border-right:0}}
-"""
+def _chart_card(chart: ChartSpec, chart_number: int) -> str:
+    sources = "".join(
+        f"<li>{html.escape(item)}</li>" for item in chart.source_notes
+    )
+    observations = "".join(
+        f"<li>{html.escape(item)}</li>" for item in chart.observation_points
+    )
+    legend = "".join(
+        f'<span><i></i>{html.escape(item.name)}</span>' for item in chart.series
+    )
+    return f'''<article class="chart-component chart-card" data-chart-type="{html.escape(chart.chart_type)}">
+<div class="chart-header"><div><p class="chart-kicker">图 {chart_number}：</p><h2>{html.escape(chart.title)}</h2></div><span class="chart-unit">{html.escape(chart.unit)}</span></div>
+<div class="chart-legend">{legend}</div>
+<div class="chart-stage"><canvas data-chart="{html.escape(chart.chart_id)}" aria-label="{html.escape(chart.title)}"></canvas></div>
+<p class="chart-explanation">{html.escape(chart.explanation)}</p>
+{f'<div class="chart-notes"><strong>观察点</strong><ul>{observations}</ul></div>' if observations else ''}
+{f'<details class="chart-sources"><summary>数据来源</summary><ul>{sources}</ul></details>' if sources else ''}
+</article>'''
 
 
-_FINANCIAL_CANVAS_RUNTIME = """
-(()=>{const root=document.querySelector('[data-report-visuals]');if(!root)return;let visuals;try{visuals=JSON.parse(root.dataset.reportVisuals)}catch{return}const draw=(canvas,chart)=>{const rect=canvas.getBoundingClientRect(),ratio=window.devicePixelRatio||1,w=Math.max(320,rect.width),h=260;canvas.width=w*ratio;canvas.height=h*ratio;const c=canvas.getContext('2d');c.scale(ratio,ratio);c.clearRect(0,0,w,h);const values=chart.series.flatMap(s=>s.values).filter(v=>typeof v==='number'&&isFinite(v));if(!values.length)return;const min=Math.min(...values),max=Math.max(...values),span=max-min||1,p={l:42,r:16,t:16,b:34};c.strokeStyle='#dbe3ed';c.lineWidth=1;for(let i=0;i<4;i++){let y=p.t+(h-p.t-p.b)*i/3;c.beginPath();c.moveTo(p.l,y);c.lineTo(w-p.r,y);c.stroke()}chart.series.forEach(s=>{const points=s.values.map((v,i)=>[p.l+(w-p.l-p.r)*(chart.labels.length<2?0:i/(chart.labels.length-1)),p.t+(h-p.t-p.b)*(1-((typeof v==='number'?v:min)-min)/span)]);c.strokeStyle=s.color;c.lineWidth=2;c.beginPath();points.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.stroke();c.fillStyle=s.color;points.forEach(([x,y])=>{c.beginPath();c.arc(x,y,3,0,Math.PI*2);c.fill()})});c.fillStyle='#637287';c.font='11px sans-serif';chart.labels.forEach((label,i)=>{let x=p.l+(w-p.l-p.r)*(chart.labels.length<2?0:i/(chart.labels.length-1));c.fillText(label,x-12,h-12)});canvas.title=chart.series.map(s=>`${s.name}: ${s.values.join(' / ')}`).join('\n')};root.querySelectorAll('canvas[data-chart]').forEach(canvas=>{const chart=visuals.charts.find(item=>item.id===canvas.dataset.chart);if(chart){draw(canvas,chart);window.addEventListener('resize',()=>draw(canvas,chart),{passive:true})}})})();
-"""
+_FINANCIAL_REPORT_STYLE = FUNDAMENTAL_VISION_STYLE
 
-# Tooltip interaction is intentionally a second, dependency-free runtime: the
-# exported HTML and the in-app fragment each keep chart data local to the file.
-_FINANCIAL_CANVAS_RUNTIME += """
-(()=>{const root=document.querySelector('[data-report-visuals]');if(!root)return;let visuals;try{visuals=JSON.parse(root.dataset.reportVisuals)}catch{return}root.querySelectorAll('canvas[data-chart]').forEach(canvas=>{const chart=visuals.charts.find(item=>item.id===canvas.dataset.chart);if(!chart)return;const host=canvas.parentElement;host.style.position='relative';const tip=document.createElement('div');tip.hidden=true;tip.style.cssText='position:absolute;z-index:2;max-width:260px;padding:5px 8px;background:#0d223d;color:#fff;font-size:12px;pointer-events:none';host.append(tip);canvas.addEventListener('mousemove',event=>{const rect=canvas.getBoundingClientRect(),ratio=(event.clientX-rect.left)/Math.max(rect.width,1),index=Math.max(0,Math.min(chart.labels.length-1,Math.round(ratio*(chart.labels.length-1))));tip.textContent=`${chart.labels[index]} · ${chart.series.map(s=>`${s.name}: ${s.values[index]??'—'}`).join(' | ')}`;tip.style.left=`${event.clientX-rect.left+12}px`;tip.style.top=`${event.clientY-rect.top+12}px`;tip.hidden=false});canvas.addEventListener('mouseleave',()=>tip.hidden=true)})})();
-"""
+
+_FINANCIAL_CANVAS_RUNTIME = REPORT_CHART_RUNTIME

@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from app.runtime.exceptions import AgentOutputError
 from app.runtime.schemas import AgentNodeOutput
 from app.fundamental.schemas import (
+    FinalSynthesisOutput,
     FinancialResearchDraft,
     FundamentalWriterOutput,
     LeadSynthesisOutput,
@@ -17,8 +18,10 @@ from app.fundamental.schemas import (
     SpecialistResearchOutput,
     ValuationResearchOutput,
     WriterPlanOutput,
+    WriterSectionOutput,
 )
 from app.technical.schemas import TechnicalAssemblyOutput, TechnicalResearchOutput
+from app.charts.schemas import EvidenceChartExtractionOutput
 
 
 TOP_LEVEL_FIELDS = set(AgentNodeOutput.model_fields)
@@ -114,8 +117,11 @@ def output_model_for_schema(schema_name: str):
         "valuation_research_output": ValuationResearchOutput,
         "lead_final_review_output": LeadFinalReviewOutput,
         "fundamental_writer_output": FundamentalWriterOutput,
+        "final_synthesis_output": FinalSynthesisOutput,
         "lead_synthesis_output": LeadSynthesisOutput,
         "writer_plan_output": WriterPlanOutput,
+        "writer_section_output": WriterSectionOutput,
+        "evidence_chart_extraction_output": EvidenceChartExtractionOutput,
     }
     try:
         return models[schema_name]

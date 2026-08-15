@@ -138,12 +138,13 @@ def _read_jina_once(url: str, settings) -> str:
                         "RESEARCH_SOURCE_FAILED: 来源不可读（reader 返回 4xx），请跳过该来源不要重试"
                     )
                 for chunk in response.iter_bytes():
-                    total += len(chunk)
-                    chunks.append(chunk)
-                    if total > byte_limit:
-                        raise ResearchSourceError(
-                            "RESEARCH_SOURCE_FAILED: 来源响应过大"
-                        )
+                    remaining = byte_limit - total
+                    if remaining <= 0:
+                        break
+                    chunks.append(chunk[:remaining])
+                    total += min(len(chunk), remaining)
+                    if len(chunk) > remaining:
+                        break
     except httpx.RequestError as exc:
         raise _TransientReadError(str(exc)) from exc
 

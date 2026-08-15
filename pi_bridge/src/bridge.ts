@@ -247,9 +247,9 @@ export class Bridge {
         symbol,
         as_of: asOf,
         thesis: "研究主线聚焦品牌壁垒、行业需求、现金流与估值假设。",
-        key_questions: ["需求和渠道的可持续性如何"],
-        business_scope: ["产品结构", "渠道与品牌壁垒"],
-        industry_scope: ["供需和竞争格局"],
+        key_questions: ["行业需求变化能否通过产品结构和渠道优势转化为可持续增长"],
+        business_scope: ["核心产品和渠道如何创造收入与利润，竞争优势能否持续"],
+        industry_scope: ["行业供需、消费环境与宏观需求如何变化并影响产品定价"],
         financial_focus: ["增长", "盈利能力", "自由现金流"],
         valuation_focus: ["相对估值", "简化 DCF"],
         risks_to_verify: ["行业需求波动", "估值假设敏感性"],
@@ -275,28 +275,55 @@ export class Bridge {
       const business = artifacts.business_research ?? {};
       const industry = artifacts.industry_research ?? {};
       const missing = [...((business.missing_information ?? []) as unknown[]), ...((industry.missing_information ?? []) as unknown[])];
-      return JSON.stringify({ symbol, business_status: "accepted", industry_status: missing.length ? "accepted_with_gaps" : "accepted", key_findings: ["品牌渠道优势与行业周期风险并存"], conflicts: ["业务稳定性与行业周期波动需继续验证"], financial_questions: ["自由现金流能否支持长期估值"], missing_information: missing, followup_research_tasks: ["补充关键经营与行业数据的具体口径、期间和来源"] });
+      return JSON.stringify({
+        symbol,
+        business_status: "accepted",
+        industry_status: missing.length ? "accepted_with_gaps" : "accepted",
+        key_findings: ["品牌渠道优势与行业周期风险并存"],
+        conflicts: ["业务稳定性与行业周期波动需继续验证"],
+        financial_questions: ["自由现金流能否支持长期估值"],
+        missing_information: missing,
+        followup_research_tasks: ["补充关键经营与行业数据的具体口径、期间和来源"],
+        deep_research_tasks: [{
+          task_id: "deep_01",
+          topic: "关键经营数据与现金流验证",
+          scope: "补充关键经营与行业数据，并核验自由现金流质量。",
+          research_questions: ["自由现金流能否覆盖资本开支并支持长期估值"],
+          priority_fact_types: ["historical_fact"],
+          known_material: ["品牌渠道优势与行业周期风险并存"],
+          excluded_claims: ["业务稳定性与行业周期波动需继续验证"],
+        }],
+      });
     }
     if (session.profile.profile_id === "deep_research") {
       const review = artifacts.lead_review ?? {};
-      const tasks = [
-        ...((review.followup_research_tasks ?? []) as unknown[]),
-        ...((review.missing_information ?? []) as unknown[]),
-        ...((review.financial_questions ?? []) as unknown[]),
-      ].map(String);
-      const sources = await invoke("search_research_sources", { query: tasks.join("；") || "补充 Lead Review 缺失数据" });
+      const cards = (review.deep_research_tasks ?? []) as Record<string, unknown>[];
+      const card = cards[0] ?? { task_id: "deep_01", topic: "补充 Lead Review 缺失数据" };
+      const sources = await invoke("search_research_sources", {
+        query: String(card.topic),
+        task_card_id: card.task_id,
+      });
       const sourceItems = sources.items as Record<string, unknown>[];
       const evidence = await invoke("read_research_source", {
         result_id: sourceItems[0]?.result_id,
-        claim: tasks[0] ?? "补充 Lead Review 缺失数据",
+        claim: String(card.topic),
         evidence_type: "historical_fact",
       });
+      const topics = cards.map((item) => ({
+        task_id: item.task_id,
+        topic: item.topic,
+        summary: "已围绕该专题完成来源核验。",
+        findings: [{ claim: "补充检索对专题问题进行了来源核验。", evidence_ids: [evidence.evidence_id], confidence: "medium" }],
+        risks: [],
+        missing_information: [],
+      }));
       return JSON.stringify({
         symbol,
         summary: "已按 Lead Review 的补充任务完成一轮深度检索。",
-        findings: [{ claim: tasks[0] ?? "补充数据已检索", evidence_ids: [evidence.evidence_id], confidence: "medium" }],
+        findings: [{ claim: "补充数据已检索", evidence_ids: [evidence.evidence_id], confidence: "medium" }],
         risks: [],
         missing_information: (review.missing_information ?? []) as unknown[],
+        topics,
       });
     }
     if (session.profile.profile_id === "financial_research") {
@@ -337,6 +364,24 @@ export class Bridge {
     if (session.profile.profile_id === "writer_planning") {
       const synthesis = artifacts.lead_synthesis ?? {};
       const sections = (synthesis.sections ?? []) as Record<string, unknown>[];
+      const titles: Record<string, string> = {
+        business: "业务基础与经营执行",
+        industry: "行业周期与竞争结构",
+        financial: "财务质量与增长验证",
+        valuation: "估值假设与敏感性",
+      };
+      const bySection = Object.fromEntries(
+        sections.map((item) => [String(item.section), item]),
+      ) as Record<string, Record<string, unknown>>;
+      const visualPlan: Record<string, unknown>[] = [
+        { visual_id: "visual-performance", section_id: "financial-analysis", plugin_id: "financial_performance_trend", analytical_question: "收入增长是否转化为利润增长", source_mode: "structured", metric_keys: ["revenue", "net_profit_attributable"], allowed_evidence_ids: [], allowed_assumption_ids: [], preferred_chart_type: "combo", unit_hint: "财务数据单位", placement: "after_claim", caption_focus: "比较经营规模与归母利润的变化方向", comparison_mode: "time_series", comparison_basis: "比较同一财务口径下收入与归母净利润的跨期变化", priority: 1 },
+        { visual_id: "visual-profitability", section_id: "financial-analysis", plugin_id: "profitability_quality", analytical_question: "增长质量和股东回报如何变化", source_mode: "structured", metric_keys: ["gross_margin", "net_margin", "roe"], allowed_evidence_ids: [], allowed_assumption_ids: [], preferred_chart_type: "line", unit_hint: "比率", placement: "after_body", caption_focus: "观察利润率与 ROE 的同步性", comparison_mode: "time_series", comparison_basis: "比较利润率与 ROE 在相同历史期间内的变化", priority: 2 },
+        { visual_id: "visual-cashflow", section_id: "financial-analysis", plugin_id: "cashflow_capex", analytical_question: "利润是否形成可持续的现金回报", source_mode: "structured", metric_keys: ["operating_cash_flow", "capital_expenditure", "free_cash_flow"], allowed_evidence_ids: [], allowed_assumption_ids: [], preferred_chart_type: "combo", unit_hint: "财务数据单位", placement: "after_body", caption_focus: "将经营现金流、资本开支与自由现金流联系观察", comparison_mode: "time_series", comparison_basis: "比较经营现金流、资本开支和自由现金流的跨期变化", priority: 2 },
+      ];
+      const businessEvidence = (bySection.business?.allowed_evidence_ids ?? []) as unknown[];
+      if (businessEvidence.length) {
+        visualPlan.push({ visual_id: "visual-business-mix", section_id: "business-analysis", plugin_id: "business_mix", analytical_question: "业务结构如何变化", source_mode: "evidence", metric_keys: ["业务占比"], allowed_evidence_ids: businessEvidence, allowed_assumption_ids: [], preferred_chart_type: "stacked_bar", unit_hint: "%", placement: "after_body", caption_focus: "仅呈现可在 Evidence 原文中逐点核验的数据", comparison_mode: "composition", comparison_basis: "比较统一占比口径下不同业务或期间的结构变化", priority: 4 });
+      }
       return JSON.stringify({
         symbol,
         as_of: asOf,
@@ -350,9 +395,69 @@ export class Bridge {
           allowed_assumption_ids: item.allowed_assumption_ids ?? [],
           visual_emphasis: item.section === "financial" ? "trend" : (item.section === "valuation" ? "valuation" : "none"),
         })),
+        report_composition: sections.map((item, index) => ({
+          section_id: `${String(item.section)}-analysis`,
+          title: titles[String(item.section)] ?? "专题分析",
+          purpose: item.main_point,
+          narrative_order: index + 1,
+          allowed_evidence_ids: item.allowed_evidence_ids ?? [],
+          allowed_assumption_ids: item.allowed_assumption_ids ?? [],
+          writer_group: item.section === "valuation" ? "financial" : item.section,
+          visual_components: item.section === "financial"
+            ? ["chart", "table"]
+            : (item.section === "valuation" ? ["chart", "callout"] : ["callout"]),
+        })),
+        visual_plan: visualPlan,
         key_findings: synthesis.key_findings ?? [],
         risks: synthesis.risks ?? [],
         missing_information: synthesis.missing_information ?? [],
+      });
+    }
+    if (session.profile.profile_id === "chart_data_extractor") {
+      return JSON.stringify({ symbol, as_of: asOf, candidates: [] });
+    }
+    if (session.profile.profile_id === "writer_section") {
+      const assignments = (artifacts.writer_assignment ?? []) as Record<string, unknown>[];
+      return JSON.stringify({
+        symbol,
+        as_of: asOf,
+        section_group: context.section_group,
+        sections: assignments.map((item) => ({
+          section_id: item.section_id,
+          title: item.title,
+          main_claim: item.purpose,
+          body: `${String(item.purpose)} 本专题依据分配给当前章节 Writer 的已验证材料展开，围绕核心判断、事实依据、经营影响和持续观察形成连续论证。所有数字与引用均受当前材料包约束，不跨章节扩写。`,
+          evidence_ids: item.allowed_evidence_ids ?? [],
+          assumption_ids: item.allowed_assumption_ids ?? [],
+          observation_points: ["后续披露中的关键经营指标", "专题相关外部条件变化"],
+        })),
+      });
+    }
+    if (session.profile.profile_id === "final_synthesis") {
+      const writerSections = (artifacts.writer_sections ?? {}) as Record<string, Record<string, unknown>>;
+      const allSections = Object.values(writerSections).flatMap((output) =>
+        ((output.sections ?? []) as Record<string, unknown>[])
+      );
+      const knownIds = new Set(allSections.map((section) => String(section.section_id)));
+      const composition = ((artifacts.writer_plan as Record<string, unknown>)?.report_composition ?? []) as Record<string, unknown>[];
+      const sectionOrder = [...composition]
+        .sort((left, right) => Number(left.narrative_order) - Number(right.narrative_order))
+        .map((item) => String(item.section_id))
+        .filter((sectionId) => knownIds.has(sectionId));
+      for (const section of allSections) {
+        const sectionId = String(section.section_id);
+        if (!sectionOrder.includes(sectionId)) sectionOrder.push(sectionId);
+      }
+      const leadSynthesis = artifacts.lead_synthesis as Record<string, unknown>;
+      return JSON.stringify({
+        symbol,
+        as_of: asOf,
+        section_order: sectionOrder,
+        text_edits: [],
+        transitions: [],
+        executive_summary: leadSynthesis.executive_focus,
+        conclusion: "全文应沿着公司业务、行业环境与财务兑现的主线连续理解。",
+        edit_summary: ["按 Writer Plan 组装三个 Writer 的专题稿"],
       });
     }
     if (session.profile.profile_id === "fundamental_writer") {

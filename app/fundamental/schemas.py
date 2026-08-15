@@ -135,6 +135,7 @@ class ResearchSource(StrictModel):
 
 class ResearchSearchResults(StrictModel):
     items: list[ResearchSource]
+    retrieval_notice: str | None = None
 
 
 class AssumptionItem(StrictModel):
@@ -233,6 +234,7 @@ class LeadPlanOutput(StrictModel):
     key_questions: list[str]
     business_scope: list[str]
     industry_scope: list[str]
+    industry_types: list[str] = Field(default_factory=list)
     financial_focus: list[str]
     valuation_focus: list[str]
     risks_to_verify: list[str]
@@ -245,12 +247,32 @@ class ResearchFinding(StrictModel):
     confidence: Literal["low", "medium", "high"]
 
 
+class DeepResearchTaskCard(StrictModel):
+    task_id: str = Field(pattern=r"^deep_\d{2}$")
+    topic: str
+    scope: str
+    research_questions: list[str] = Field(min_length=1)
+    priority_fact_types: list[str] = Field(default_factory=list)
+    known_material: list[str] = Field(default_factory=list)
+    excluded_claims: list[str] = Field(default_factory=list)
+
+
+class DeepResearchTopicResult(StrictModel):
+    task_id: str = Field(pattern=r"^deep_\d{2}$")
+    topic: str
+    summary: str
+    findings: list[ResearchFinding] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    missing_information: list[str] = Field(default_factory=list)
+
+
 class SpecialistResearchOutput(StrictModel):
     symbol: str
     summary: str
     findings: list[ResearchFinding]
     risks: list[str]
     missing_information: list[str]
+    topics: list[DeepResearchTopicResult] = Field(default_factory=list)
 
 
 class LeadReviewOutput(StrictModel):
@@ -262,6 +284,7 @@ class LeadReviewOutput(StrictModel):
     financial_questions: list[str]
     missing_information: list[str]
     followup_research_tasks: list[str] = Field(default_factory=list)
+    deep_research_tasks: list[DeepResearchTaskCard] = Field(default_factory=list)
 
 
 class AssumptionProposal(StrictModel):
@@ -374,6 +397,41 @@ class WriterPlanSection(StrictModel):
     visual_emphasis: Literal["none", "trend", "quality", "valuation"] = "none"
 
 
+class ReportCompositionSection(StrictModel):
+    section_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,63}$")
+    title: str = Field(min_length=2, max_length=80)
+    purpose: str = Field(min_length=4, max_length=500)
+    narrative_order: int = Field(ge=1, le=8)
+    allowed_evidence_ids: list[str] = Field(default_factory=list)
+    allowed_assumption_ids: list[str] = Field(default_factory=list)
+    visual_components: list[Literal["chart", "table", "timeline", "callout"]] = Field(default_factory=list)
+    writer_group: Literal["business", "industry", "financial"] | None = None
+
+
+class PlannedVisual(StrictModel):
+    visual_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,79}$")
+    section_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,63}$")
+    plugin_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_]{1,79}$")
+    analytical_question: str = Field(min_length=4, max_length=500)
+    source_mode: Literal["structured", "evidence", "mixed"]
+    metric_keys: list[str] = Field(default_factory=list)
+    allowed_evidence_ids: list[str] = Field(default_factory=list)
+    allowed_assumption_ids: list[str] = Field(default_factory=list)
+    preferred_chart_type: Literal[
+        "line", "bar", "stacked_bar", "area", "candlestick", "combo",
+        "band", "waterfall", "timeline",
+    ]
+    time_range: str = Field(default="all_available", max_length=80)
+    unit_hint: str = Field(default="", max_length=40)
+    placement: Literal["before_section", "after_claim", "after_body"] = "after_body"
+    caption_focus: str = Field(default="", max_length=500)
+    comparison_mode: Literal[
+        "time_series", "cross_section", "scenario", "composition"
+    ]
+    comparison_basis: str = Field(min_length=4, max_length=500)
+    priority: int = Field(default=1, ge=1, le=10)
+
+
 class WriterPlanOutput(StrictModel):
     symbol: str
     as_of: date
@@ -383,6 +441,8 @@ class WriterPlanOutput(StrictModel):
     key_findings: list[str]
     risks: list[str]
     missing_information: list[str]
+    report_composition: list[ReportCompositionSection] = Field(default_factory=list)
+    visual_plan: list[PlannedVisual] = Field(default_factory=list)
 
 
 class WriterNarrativeSection(StrictModel):
@@ -392,6 +452,53 @@ class WriterNarrativeSection(StrictModel):
 
 class WriterAnalyticalSection(WriterNarrativeSection):
     assumption_ids: list[str]
+
+
+class WrittenReportSection(StrictModel):
+    section_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,63}$")
+    title: str = Field(min_length=2, max_length=80)
+    main_claim: str = Field(min_length=4, max_length=500)
+    body: str = Field(min_length=40, max_length=24_000)
+    evidence_ids: list[str] = Field(default_factory=list)
+    assumption_ids: list[str] = Field(default_factory=list)
+    observation_points: list[str] = Field(default_factory=list)
+
+
+class WriterSectionOutput(StrictModel):
+    """A bounded, independently-written portion of the final report."""
+
+    symbol: str
+    as_of: date
+    section_group: Literal["business", "industry", "financial"]
+    sections: list[WrittenReportSection] = Field(min_length=1)
+
+
+class FinalSynthesisTextEdit(StrictModel):
+    """A bounded edit against text already written by a Section Writer."""
+
+    section_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,63}$")
+    field: Literal["title", "main_claim", "body"]
+    target_text: str = Field(min_length=1, max_length=600)
+    replacement_text: str = Field(max_length=1_200)
+    reason: Literal["deduplicate", "terminology", "consistency", "clarity"]
+
+
+class FinalSynthesisTransition(StrictModel):
+    before_section_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,63}$")
+    text: str = Field(min_length=10, max_length=1_000)
+
+
+class FinalSynthesisOutput(StrictModel):
+    """Editorial instructions; intentionally cannot carry rewritten sections."""
+
+    symbol: str
+    as_of: date
+    section_order: list[str] = Field(min_length=1)
+    text_edits: list[FinalSynthesisTextEdit] = Field(default_factory=list, max_length=20)
+    transitions: list[FinalSynthesisTransition] = Field(default_factory=list, max_length=8)
+    executive_summary: str = Field(min_length=8, max_length=4_000)
+    conclusion: str = Field(min_length=8, max_length=2_000)
+    edit_summary: list[str] = Field(default_factory=list, max_length=20)
 
 
 class FundamentalWriterOutput(StrictModel):
@@ -409,6 +516,7 @@ class FundamentalWriterOutput(StrictModel):
     missing_information: list[str]
     conclusion: str
     disclaimer: str
+    sections: list[WrittenReportSection] = Field(default_factory=list)
 
 
 def validate_references(
@@ -426,6 +534,7 @@ def validate_references(
             evidence_ids.extend(section.evidence_ids)
     for section in getattr(output, "sections", []):
         evidence_ids.extend(getattr(section, "allowed_evidence_ids", []))
+        evidence_ids.extend(getattr(section, "evidence_ids", []))
     known_evidence = {item.id for item in evidence.items}
     missing_evidence = set(evidence_ids) - known_evidence
     if missing_evidence:
@@ -437,6 +546,7 @@ def validate_references(
             assumption_ids.extend(section.assumption_ids)
     for section in getattr(output, "sections", []):
         assumption_ids.extend(getattr(section, "allowed_assumption_ids", []))
+        assumption_ids.extend(getattr(section, "assumption_ids", []))
     known_assumptions = {item.id for item in assumptions.items}
     missing_assumptions = set(assumption_ids) - known_assumptions
     if missing_assumptions:

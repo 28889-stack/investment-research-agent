@@ -84,11 +84,12 @@ _LIVE_SEARCH_PROVIDERS = {
     "akshare_reports",
     "akshare_notices",
     "tavily",
+    "keenable",
     "firecrawl",
     "aggregator",
 }
 
-_PROVIDERS_REQUIRING_KEY = {"tavily", "firecrawl"}
+_PROVIDERS_REQUIRING_KEY = {"tavily", "keenable", "firecrawl"}
 
 
 def _research_search_ready(

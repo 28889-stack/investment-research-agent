@@ -3,109 +3,145 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>任务进度 · 金融投研 Agent</title>
+    <meta name="theme-color" content="#f7f7f8">
+    <title>研究过程 · 弦月研究</title>
     <link rel="stylesheet" href="/static/styles.css">
   </head>
-  <body>
-    <header class="site-header">
-      <a class="brand" href="/">金融投研 Agent</a>
-      <a class="header-link" href="/">返回任务列表</a>
+  <body class="app-page process-page">
+    <div class="ambient-field" aria-hidden="true"><span class="ambient-orb ambient-orb-primary"></span><span class="ambient-orb ambient-orb-secondary"></span><span class="ambient-grid"></span></div>
+    <div id="cursor-spotlight" class="cursor-spotlight" aria-hidden="true"></div>
+    <header class="app-header glass-surface">
+      <a class="app-brand" href="/" aria-label="弦月研究首页">
+        <svg class="brand-symbol" viewBox="0 0 40 40" aria-hidden="true">
+          <circle cx="20" cy="20" r="14"></circle>
+          <path d="M8 29L31 10"></path>
+          <path d="M11 31L34 12"></path>
+        </svg>
+        <span><strong>弦月研究</strong><small>AI 金融研究工作台</small></span>
+      </a>
+      <a class="app-header-link" href="/">创建新研究</a>
     </header>
 
-    <main class="page-shell page-shell-narrow">
-      <section class="page-heading">
-        <h1>研究任务进度</h1>
-        <p id="run-id" class="monospace">正在读取任务…</p>
-      </section>
+    <main class="process-shell">
+      <div id="page-error" class="notice notice-error page-notice" role="alert" hidden></div>
 
-      <div id="page-error" class="notice notice-error" role="alert" hidden></div>
-
-      <section class="panel" aria-labelledby="status-title">
-        <div class="section-header">
-          <h2 id="status-title">执行状态</h2>
-          <span id="status-badge" class="status-badge">加载中</span>
+      <section class="run-masthead glass-surface" aria-labelledby="run-title">
+        <div class="run-identity">
+          <p id="run-id" class="run-id">正在读取任务…</p>
+          <h1 id="run-title"><span id="run-symbol-title">研究标的</span><small id="analysis-type">—</small></h1>
+          <p id="current-stage" class="current-stage">正在连接研究流程</p>
         </div>
-
-        <dl class="detail-grid">
-          <div><dt>股票</dt><dd id="symbol">—</dd></div>
-          <div><dt>分析类型</dt><dd id="analysis-type">—</dd></div>
-          <div><dt>当前阶段</dt><dd id="current-stage">—</dd></div>
-          <div><dt>数据截止日期</dt><dd id="as-of">—</dd></div>
-          <div><dt>LangGraph 节点</dt><dd id="current-node">—</dd></div>
-          <div><dt>Runtime 模式</dt><dd id="runtime-mode">—</dd></div>
-          <div><dt>Checkpoint</dt><dd id="checkpoint-status">—</dd></div>
-        </dl>
-
-        <div class="progress-header">
-          <span>总体进度</span>
+        <div class="run-state">
+          <span id="status-badge" class="status-badge">加载中</span>
           <strong id="progress-value">0%</strong>
         </div>
         <div class="progress-track" role="progressbar" aria-label="总体进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
           <div id="progress-bar" class="progress-bar"></div>
         </div>
-
-        <ol id="technical-stages" class="technical-stages" aria-label="技术面五阶段" hidden>
-          <li data-node="resolve_security">证券解析</li>
-          <li data-node="technical_research">技术指标研究</li>
-          <li data-node="kronos">Kronos 分析</li>
-          <li data-node="technical_assembly">技术信号组装</li>
-          <li data-node="write_report">生成报告</li>
-        </ol>
-
-        <ol id="fundamental-stages" class="technical-stages" aria-label="基本面十一阶段" hidden>
-          <li data-node="resolve_security">证券解析</li>
-          <li data-node="lead_planning">Lead 规划</li>
-          <li data-node="business_research">公司业务研究</li>
-          <li data-node="industry_research">行业研究</li>
-          <li data-node="lead_review">Lead 审核</li>
-          <li data-node="deep_research">深度补充检索</li>
-          <li data-node="assemble_retrieval_package">整理检索资料包</li>
-          <li data-node="financial_research">财务研究</li>
-          <li data-node="valuation_research">估值研究</li>
-          <li data-node="lead_final_review">最终审核</li>
-          <li data-node="lead_synthesis">Lead 报告主线</li>
-          <li data-node="writer_planning">Writer 计划</li>
-          <li data-node="fundamental_writer">正式报告 Writer</li>
-          <li data-node="write_fundamental_report">生成正式报告</li>
-        </ol>
-
-        <div id="run-error" class="notice notice-error" role="alert" hidden></div>
-
-        <div class="actions">
-          <button id="cancel-button" class="button button-danger" type="button">取消任务</button>
-          <a id="report-button" class="button button-primary" href="#" hidden>查看报告</a>
-        </div>
+        <dl class="run-facts">
+          <div><dt>证券</dt><dd id="symbol">—</dd></div>
+          <div><dt>数据截止</dt><dd id="as-of">—</dd></div>
+          <div><dt>当前节点</dt><dd id="current-node">等待进入流程</dd></div>
+          <div><dt>运行模式</dt><dd id="runtime-mode">—</dd></div>
+          <div><dt>Checkpoint</dt><dd id="checkpoint-status">—</dd></div>
+        </dl>
       </section>
 
-      <section class="panel" aria-labelledby="agents-title">
-        <div class="section-header">
-          <h2 id="agents-title">Agent 执行摘要</h2>
-          <span class="section-note">仅显示已校验结果</span>
-        </div>
-        <div class="table-wrap">
-          <table class="execution-table">
-            <thead>
-              <tr>
-                <th>节点</th>
-                <th>Profile</th>
-                <th>状态</th>
-                <th>工具次数</th>
-                <th>已校验摘要</th>
-              </tr>
-            </thead>
-            <tbody id="execution-list">
-              <tr><td colspan="5" class="empty-state">尚无 Agent 执行记录</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <div class="process-layout">
+        <aside class="workflow-panel glass-surface" aria-labelledby="workflow-heading">
+          <header>
+            <h2 id="workflow-heading">研究轨道</h2>
+            <p>节点状态来自当前任务</p>
+          </header>
 
-      <section class="panel" aria-labelledby="events-title">
-        <h2 id="events-title">执行记录</h2>
-        <ol id="event-list" class="event-ledger">
-          <li class="empty-state">正在加载执行记录…</li>
-        </ol>
-      </section>
+          <ol id="technical-stages" class="workflow-track" aria-label="技术面研究流程" hidden>
+            <li class="workflow-node" data-node="resolve_security"><span>01</span><strong>证券解析</strong></li>
+            <li class="workflow-node" data-node="technical_research"><span>02</span><strong>技术指标研究</strong></li>
+            <li class="workflow-node" data-node="kronos"><span>03</span><strong>Kronos 分析</strong></li>
+            <li class="workflow-node" data-node="technical_assembly"><span>04</span><strong>技术信号组装</strong></li>
+            <li class="workflow-node" data-node="write_report"><span>05</span><strong>生成报告</strong></li>
+          </ol>
+
+          <ol id="fundamental-stages" class="workflow-track workflow-track-long" aria-label="基本面研究流程" hidden>
+            <li class="workflow-node" data-node="resolve_security"><span>01</span><strong>证券解析</strong></li>
+            <li class="workflow-node" data-node="lead_planning"><span>02</span><strong>Lead 规划</strong></li>
+            <li class="workflow-branch" aria-label="首轮双线研究">
+              <div class="workflow-node" data-node="business_research"><span>03A</span><strong>公司业务研究</strong></div>
+              <div class="workflow-node" data-node="industry_research"><span>03B</span><strong>行业研究</strong></div>
+            </li>
+            <li class="workflow-node" data-node="lead_review"><span>04</span><strong>Lead 审核</strong></li>
+            <li class="workflow-node" data-node="deep_research"><span>05</span><strong>深度补充检索</strong></li>
+            <li class="workflow-node" data-node="assemble_retrieval_package"><span>06</span><strong>整理检索资料包</strong></li>
+            <li class="workflow-node" data-node="financial_research"><span>07</span><strong>财务研究</strong></li>
+            <li class="workflow-node" data-node="valuation_research"><span>08</span><strong>估值研究</strong></li>
+            <li class="workflow-node" data-node="lead_final_review"><span>09</span><strong>最终审核</strong></li>
+            <li class="workflow-node" data-node="lead_synthesis"><span>10</span><strong>Lead 报告主线</strong></li>
+            <li class="workflow-node" data-node="writer_planning"><span>11</span><strong>Writer 计划</strong></li>
+            <li class="workflow-node" data-node="build_fundamental_visuals"><span>12</span><strong>图表与版式生成</strong></li>
+            <li class="workflow-node" data-node="fundamental_writer"><span>13</span><strong>正式报告 Writer</strong></li>
+            <li class="workflow-node" data-node="final_synthesis"><span>14</span><strong>最终编辑与组装</strong></li>
+            <li class="workflow-node" data-node="write_fundamental_report"><span>15</span><strong>生成正式报告</strong></li>
+          </ol>
+        </aside>
+
+        <div class="process-content">
+          <section id="current-work" class="current-work glass-surface" aria-labelledby="current-work-title">
+            <header class="section-header">
+              <div>
+                <h2 id="current-work-title">当前工作</h2>
+                <p>仅展示已确认的运行状态与产物摘要。</p>
+              </div>
+              <span id="current-node-label" class="node-label">等待调度</span>
+            </header>
+            <div class="current-work-body">
+              <div class="work-signal" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              <p id="current-work-description">Worker 正在领取任务，进入流程后将在这里显示当前节点。</p>
+            </div>
+            <div id="run-error" class="notice notice-error" role="alert" hidden></div>
+            <div class="actions">
+              <button id="cancel-button" class="button button-danger" type="button">取消任务</button>
+              <a id="report-button" class="button button-primary" href="#" hidden>查看报告</a>
+            </div>
+          </section>
+
+          <section class="process-section glass-surface" aria-labelledby="agents-title">
+            <div class="section-header">
+              <div>
+                <h2 id="agents-title">Agent 执行摘要</h2>
+                <p>仅显示通过结构校验的结果。</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="execution-table">
+                <thead>
+                  <tr>
+                    <th>节点</th>
+                    <th>Profile</th>
+                    <th>状态</th>
+                    <th>工具次数</th>
+                    <th>已校验摘要</th>
+                  </tr>
+                </thead>
+                <tbody id="execution-list">
+                  <tr><td colspan="5" class="empty-state">尚无 Agent 执行记录</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="process-section glass-surface" aria-labelledby="events-title">
+            <div class="section-header">
+              <div>
+                <h2 id="events-title">执行记录</h2>
+                <p>按时间记录任务状态变化。</p>
+              </div>
+            </div>
+            <ol id="event-list" class="event-ledger">
+              <li class="empty-state">正在加载执行记录…</li>
+            </ol>
+          </section>
+        </div>
+      </div>
     </main>
 
     <script src="/static/run.js" defer></script>

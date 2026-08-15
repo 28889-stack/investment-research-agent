@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from importlib import import_module
 import sys
 from types import SimpleNamespace
 
@@ -25,6 +26,7 @@ from app.technical.market_data import (
     load_persisted_market_data,
     validate_market_data,
 )
+from app.technical.schemas import PatternSignal
 
 
 AS_OF = date(2026, 8, 5)
@@ -315,6 +317,178 @@ def test_pattern_candidates_are_determined_by_code() -> None:
     assert "20日突破" in output.patterns
     assert "均线多头排列" in output.patterns
     assert "RSI超买" in output.patterns
+
+
+def test_detected_patterns_include_structured_signal_details() -> None:
+    count = 140
+    close = np.arange(100, 100 + count, dtype=float)
+    frame = pd.DataFrame(
+        {
+            "date": pd.bdate_range(end=AS_OF, periods=count),
+            "open": close - 0.2,
+            "high": close + 0.4,
+            "low": close - 0.6,
+            "close": close,
+            "volume": np.linspace(1_000_000, 2_000_000, count),
+            "amount": close * np.linspace(1_000_000, 2_000_000, count),
+        }
+    )
+
+    output, _ = calculate_indicators(
+        frame,
+        symbol="600519.SH",
+        as_of=AS_OF,
+        data_version="pattern-signals-v1",
+        script_version="tech_indicator_v1",
+    )
+
+    assert [signal.name for signal in output.signals] == output.patterns
+    breakout = next(signal for signal in output.signals if signal.name == "20日突破")
+    assert breakout.detected_at == AS_OF
+    assert breakout.chart_family == "price_trend"
+    assert {"latest_close", "prior_20_high"}.issubset(breakout.trigger_values)
+    assert breakout.trigger_rule
+    assert breakout.confirmation_rule
+    assert breakout.invalidation_rule
+
+
+def test_technical_visuals_include_market_overview_and_one_chart_per_detected_pattern() -> None:
+    count = 140
+    close = np.arange(100, 100 + count, dtype=float)
+    frame = pd.DataFrame(
+        {
+            "date": pd.bdate_range(end=AS_OF, periods=count),
+            "open": close - 0.2,
+            "high": close + 0.4,
+            "low": close - 0.6,
+            "close": close,
+            "volume": np.linspace(1_000_000, 2_000_000, count),
+            "amount": close * np.linspace(1_000_000, 2_000_000, count),
+        }
+    )
+    output, enriched = calculate_indicators(
+        frame,
+        symbol="600519.SH",
+        as_of=AS_OF,
+        data_version="visuals-v1",
+        script_version="tech_indicator_v1",
+    )
+    visuals_module = import_module("app.technical.visuals")
+
+    visuals = visuals_module.build_technical_visuals(enriched, output)
+
+    overview = next(
+        chart for chart in visuals.charts
+        if chart.chart_id == "technical-market-overview"
+    )
+    pattern_charts = [
+        chart for chart in visuals.charts
+        if chart.chart_id != "technical-market-overview"
+    ]
+    baseline_series = {
+        "close", "sma5", "sma20", "sma60",
+        "support20", "support60", "resistance20", "resistance60",
+        "volume", "volume-ma20",
+    }
+
+    assert len(visuals.charts) == len(output.signals) + 1
+    assert overview.plugin_id == "technical_market_overview"
+    assert overview.annotations == []
+    assert baseline_series.issubset({item.series_id for item in overview.series})
+    assert {chart.annotations[0].label for chart in pattern_charts} == set(output.patterns)
+    assert all(len(chart.annotations) == 1 for chart in pattern_charts)
+    assert len({chart.chart_id for chart in visuals.charts}) == len(visuals.charts)
+    price_signals = [
+        signal for signal in output.signals if signal.chart_family == "price_trend"
+    ]
+    assert len(price_signals) >= 2
+    for signal in price_signals:
+        chart = next(
+            item for item in pattern_charts
+            if item.annotations[0].label == signal.name
+        )
+        assert signal.name in chart.title
+        assert signal.name in chart.explanation
+        assert baseline_series.issubset({item.series_id for item in chart.series})
+        annotation = chart.annotations[0]
+        assert signal.confirmation_rule in annotation.detail
+        assert signal.invalidation_rule in annotation.detail
+
+
+def test_technical_visuals_generate_market_overview_when_no_pattern_is_detected(settings) -> None:
+    frame = get_market_data("600519.SH", AS_OF, settings)
+    output, enriched = calculate_indicators(
+        frame,
+        symbol="600519.SH",
+        as_of=AS_OF,
+        data_version="no-signals-v1",
+        script_version="tech_indicator_v1",
+    )
+    output = output.model_copy(update={"patterns": [], "signals": []})
+    visuals_module = import_module("app.technical.visuals")
+
+    visuals = visuals_module.build_technical_visuals(enriched, output)
+
+    assert len(visuals.charts) == 1
+    overview = visuals.charts[0]
+    assert overview.chart_id == "technical-market-overview"
+    assert overview.annotations == []
+    assert "X 轴最多显示 6 个等间隔日期" in overview.rendering_notes
+    assert "Y 轴每个分区最多 4 个刻度" in overview.rendering_notes
+    assert {
+        "close", "sma5", "sma20", "sma60",
+        "support20", "support60", "resistance20", "resistance60",
+        "volume", "volume-ma20",
+    }.issubset({item.series_id for item in overview.series})
+
+
+def test_technical_pattern_charts_add_their_matching_indicator_panel(settings) -> None:
+    frame = get_market_data("600519.SH", AS_OF, settings)
+    output, enriched = calculate_indicators(
+        frame,
+        symbol="600519.SH",
+        as_of=AS_OF,
+        data_version="pattern-panels-v1",
+        script_version="tech_indicator_v1",
+    )
+    signals = [
+        PatternSignal(
+            name="MACD金叉",
+            detected_at=AS_OF,
+            chart_family="macd",
+            trigger_values={"dif": output.macd.dif, "dea": output.macd.dea},
+            trigger_rule="DIF 上穿 DEA",
+            confirmation_rule="DIF 保持在 DEA 上方",
+            invalidation_rule="DIF 重新下穿 DEA",
+        ),
+        PatternSignal(
+            name="RSI超买",
+            detected_at=AS_OF,
+            chart_family="rsi",
+            trigger_values={"rsi14": output.rsi.rsi14, "threshold": 70.0},
+            trigger_rule="RSI14 高于 70",
+            confirmation_rule="RSI 保持强势",
+            invalidation_rule="RSI 回落至 70 下方",
+        ),
+    ]
+    visuals_module = import_module("app.technical.visuals")
+
+    visuals = visuals_module.build_technical_visuals(
+        enriched,
+        output.model_copy(update={"patterns": [item.name for item in signals], "signals": signals}),
+    )
+    chart_by_pattern = {
+        chart.annotations[0].label: chart
+        for chart in visuals.charts
+        if chart.annotations
+    }
+
+    assert {"macd-dif", "macd-dea", "macd-hist"}.issubset(
+        {item.series_id for item in chart_by_pattern["MACD金叉"].series}
+    )
+    assert {"rsi14", "rsi70", "rsi30"}.issubset(
+        {item.series_id for item in chart_by_pattern["RSI超买"].series}
+    )
 
 
 def test_kronos_mock_is_deterministic(settings: Settings) -> None:

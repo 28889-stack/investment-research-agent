@@ -7,7 +7,7 @@ import socket
 import time
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 import httpx
 
@@ -40,6 +40,12 @@ class EvidenceStore:
         evidence_type: str,
     ) -> EvidenceItem:
         collection = self.load()
+        # A document may be useful to more than one research role.  Keep the
+        # Evidence object canonical for an identical URL/body pair instead of
+        # appending a second copy with a paraphrased claim.
+        for existing in collection.items:
+            if existing.url == url and existing.content == content:
+                return existing
         used = {int(item.id.partition("_")[2]) for item in collection.items}
         number = 1
         while number in used:
@@ -58,6 +64,15 @@ class EvidenceStore:
         self._write(collection)
         return item
 
+    def find_by_url(self, url: str) -> EvidenceItem | None:
+        canonical = canonical_source_url(url)
+        if not canonical:
+            return None
+        for item in self.load().items:
+            if canonical_source_url(item.url) == canonical:
+                return item
+        return None
+
     def validate_ids(self, ids: list[str]) -> None:
         available = {item.id for item in self.load().items}
         missing = set(ids) - available
@@ -72,6 +87,22 @@ class EvidenceStore:
             encoding="utf-8",
         )
         os.replace(temporary, self.path)
+
+
+def canonical_source_url(url: str) -> str:
+    """Stable within-run identity for a public source.
+
+    Search providers often append tracking parameters or fragments to the same
+    document.  Those variants should share one retrieval/Evidence identity,
+    while distinct paths remain distinct sources.
+    """
+    parts = urlsplit((url or "").strip())
+    host = (parts.hostname or "").lower().rstrip(".")
+    if not host:
+        return ""
+    port = f":{parts.port}" if parts.port else ""
+    path = parts.path.rstrip("/") or "/"
+    return f"{parts.scheme.lower()}://{host}{port}{path}"
 
 
 def is_safe_public_url(url: str) -> bool:
@@ -159,14 +190,16 @@ def search_research_sources(
     symbol: str,
     settings,
     sources: list[str] | None = None,
+    max_results: int | None = None,
 ) -> ResearchSearchResults:
     if not query.strip():
         raise ValueError("搜索关键词不能为空")
+    effective_max_results = max_results or settings.research_search_max_results
     if settings.research_search_mode == "mock":
         return ResearchSearchResults(
             items=[
                 ResearchSource(result_id=result_id, **{key: value for key, value in item.items() if key != "content"})
-                for result_id, item in list(MOCK_SOURCES.items())[: settings.research_search_max_results]
+                for result_id, item in list(MOCK_SOURCES.items())[:effective_max_results]
             ]
         )
     if settings.research_search_mode != "live":
@@ -184,14 +217,14 @@ def search_research_sources(
             return provider.search(
                 query=query,
                 symbol=symbol,
-                max_results=settings.research_search_max_results,
+                max_results=effective_max_results,
                 timeout=settings.research_source_timeout,
                 sources=sources,
             )
         return provider.search(
             query=query,
             symbol=symbol,
-            max_results=settings.research_search_max_results,
+            max_results=effective_max_results,
             timeout=settings.research_source_timeout,
         )
     except ResearchSourceError:
@@ -289,9 +322,17 @@ def _download_public_source(url: str, settings) -> tuple[bytes, str]:
                     else settings.research_max_source_chars * 8
                 )
                 for chunk in response.iter_bytes():
-                    content.extend(chunk)
-                    if len(content) > limit:
-                        raise ValueError("来源响应过大")
+                    if "pdf" in content_type:
+                        content.extend(chunk)
+                        if len(content) > limit:
+                            raise ValueError("来源 PDF 超过下载上限")
+                        continue
+                    remaining = limit - len(content)
+                    if remaining <= 0:
+                        break
+                    content.extend(chunk[:remaining])
+                    if len(chunk) > remaining:
+                        break
         return bytes(content), content_type
 
     return _retry_http(fetch, response_expected=False)

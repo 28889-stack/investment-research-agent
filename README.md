@@ -97,7 +97,7 @@ cp .env.live.example .env
 python -m app.ops doctor
 ```
 
-Pi 通过 `@earendil-works/pi-agent-core` 驱动 Agent Session，通过 `@earendil-works/pi-ai/providers/deepseek` 调用原生 DeepSeek provider；当前模型是 `deepseek-v4-flash`，SDK 在受限 Bridge 子进程中读取 `DEEPSEEK_API_KEY`。
+Pi 通过 `@earendil-works/pi-agent-core` 驱动 Agent Session，通过 `@earendil-works/pi-ai/providers/deepseek` 调用原生 DeepSeek provider；当前模型是 `deepseek-v4-pro`，SDK 在受限 Bridge 子进程中读取 `DEEPSEEK_API_KEY`。
 
 ```bash
 python -m app.ops doctor
@@ -179,16 +179,19 @@ export KRONOS_SOURCE_DIR=./vendor/kronos
 
 Fundamental Writer 使用独立 Constrained Pi Session，1 次迭代、0 工具。它只读取 Lead、专项研究、Final Review、Evidence、Assumption，以及公司、财务指标和估值的安全摘要；不读取原始财务表、来源全文、执行过程、对话、环境变量或其他 run。Writer 不得搜索、创建 Evidence/Assumption、修改权威数字或研究主线。Writer 返回 `needs_more_research` 时同样进入人工复核，不自动返工。
 
-注册的六个基本面工具为：
+注册的七个基本面工具为：
 
 - `get_company_profile`
 - `search_research_sources`
 - `read_research_source`
+- `query_findkg`
 - `get_financial_data`
 - `calculate_financial_metrics`
 - `calculate_valuation`
 
-Lead 和 Business 可使用公司资料、搜索和来源读取；Industry 只可使用搜索和来源读取。财务数据、指标和估值工具由工作流的受信 Python 边界调用，再把结果作为只读上下文交给 Constrained Agent。所有 Agent 都不能使用 shell、任意 HTTP/文件/SQL、Python eval、技术指标工具或 Kronos。
+Lead 和 Business 可使用公司资料、搜索和来源读取；Industry 只可使用搜索和来源读取。`query_findkg` 仅在 Lead Planning 可用，用于扩展研究变量和问题，不生成 Evidence，也不会进入 Evidence Store。财务数据、指标和估值工具由工作流的受信 Python 边界调用，再把结果作为只读上下文交给 Constrained Agent。所有 Agent 都不能使用 shell、任意 HTTP/文件/SQL、Python eval、技术指标工具或 Kronos。
+
+FinDKG 使用官方发布的本地文本数据集。将 `entity2id.txt`、`relation2id.txt`、`train.txt`（可选 `valid.txt`、`test.txt`）所在目录配置给 `FINDKG_DATA_DIR`。数据集未安装或实体未命中时，工具返回空关系提示，Lead 继续使用现有公司资料和搜索，不中断流程。官方数据集目录：<https://github.com/xiaohui-victor-li/FinDKG/tree/main/FinDKG_dataset/FinDKG>。
 
 ## 基本面数据、指标与估值
 

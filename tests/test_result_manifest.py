@@ -74,7 +74,7 @@ def test_financial_metrics_change_marks_only_downstream_stale(tmp_path) -> None:
 
     stale = store.audit()
 
-    assert stale == ["financial_metrics", "financial_research", "valuation_result", "valuation_research", "lead_final_review", "lead_synthesis", "writer_plan", "fundamental_writer", "report_visuals", "fundamental_report"]
+    assert stale == ["financial_metrics", "financial_research", "valuation_result", "valuation_research", "lead_final_review", "lead_synthesis", "writer_plan", "report_visuals", "fundamental_writer", "fundamental_report"]
     assert store.load().results["business_research"].status == "current"
 
 
@@ -91,7 +91,7 @@ def test_evidence_change_propagates_to_reference_consumers(tmp_path) -> None:
 
     # Evidence remains decoupled from research rounds. It first rebuilds the
     # retrieval package, then the Lead/Writer material-selection chain.
-    assert stale == ["retrieval_package", "lead_final_review", "lead_synthesis", "writer_plan", "fundamental_writer", "fundamental_report"]
+    assert stale == ["retrieval_package", "lead_final_review", "lead_synthesis", "writer_plan", "report_visuals", "fundamental_writer", "fundamental_report"]
     assert "fundamental_writer" in stale
     assert "fundamental_report" in stale
     assert "lead_plan" not in stale

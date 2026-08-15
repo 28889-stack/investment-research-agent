@@ -4,7 +4,7 @@ from datetime import date
 import math
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -68,6 +68,26 @@ class SupportResistance(StrictModel):
     resistance_60: float
 
 
+ChartFamily = Literal["price_trend", "macd", "rsi", "volume_price"]
+
+
+class PatternSignal(StrictModel):
+    name: str = Field(min_length=1, max_length=80)
+    detected_at: date
+    chart_family: ChartFamily
+    trigger_values: dict[str, float] = Field(default_factory=dict)
+    trigger_rule: str = Field(min_length=1, max_length=300)
+    confirmation_rule: str = Field(min_length=1, max_length=300)
+    invalidation_rule: str = Field(min_length=1, max_length=300)
+
+    @field_validator("trigger_values")
+    @classmethod
+    def finite_trigger_values(cls, values: dict[str, float]) -> dict[str, float]:
+        if not values or not all(math.isfinite(value) for value in values.values()):
+            raise ValueError("形态触发值必须为非空有限数值")
+        return values
+
+
 class TechnicalIndicators(StrictModel):
     symbol: str
     as_of: date
@@ -83,6 +103,7 @@ class TechnicalIndicators(StrictModel):
     volume: VolumeIndicators
     support_resistance: SupportResistance
     patterns: list[str]
+    signals: list[PatternSignal] = Field(default_factory=list)
 
 
 class TechnicalResearchOutput(StrictModel):

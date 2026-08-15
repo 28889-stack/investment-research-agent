@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.fundamental.schemas import (
+    FinalSynthesisOutput,
     FinancialResearchDraft,
     FundamentalWriterOutput,
     LeadSynthesisOutput,
@@ -14,7 +15,9 @@ from app.fundamental.schemas import (
     SpecialistResearchOutput,
     ValuationResearchOutput,
     WriterPlanOutput,
+    WriterSectionOutput,
 )
+from app.charts.schemas import EvidenceChartExtractionOutput
 from app.technical.schemas import TechnicalAssemblyOutput, TechnicalResearchOutput
 
 
@@ -27,8 +30,11 @@ class AgentProfile(BaseModel):
     mode: Literal["full", "constrained"]
     system_prompt: str = Field(min_length=1, max_length=8_000)
     allowed_tools: list[str]
-    max_iterations: int = Field(ge=1, le=12)
-    max_tool_calls: int = Field(ge=0, le=12)
+    # Full research agents can need one model turn per tool call plus a final
+    # structured-output turn.  Keep a finite ceiling while allowing Deep's
+    # 25-call budget to complete normally.
+    max_iterations: int = Field(ge=1, le=30)
+    max_tool_calls: int = Field(ge=0, le=25)
     context_policy: str = Field(min_length=1, max_length=80)
     output_schema: Literal[
         "agent_node_output",
@@ -41,8 +47,11 @@ class AgentProfile(BaseModel):
         "valuation_research_output",
         "lead_final_review_output",
         "fundamental_writer_output",
+        "final_synthesis_output",
         "lead_synthesis_output",
         "writer_plan_output",
+        "writer_section_output",
+        "evidence_chart_extraction_output",
     ]
     model: str | None = None
     timeout_seconds: float = Field(gt=0, le=300)
@@ -111,8 +120,11 @@ class AgentExecutionResult(BaseModel):
         | ValuationResearchOutput
         | LeadFinalReviewOutput
         | FundamentalWriterOutput
+        | FinalSynthesisOutput
         | LeadSynthesisOutput
         | WriterPlanOutput
+        | WriterSectionOutput
+        | EvidenceChartExtractionOutput
     )
     reused: bool = False
 

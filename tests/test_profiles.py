@@ -47,9 +47,12 @@ def test_loads_full_and_constrained_profiles():
         "financial_research",
         "valuation_research",
         "lead_synthesis",
-        "writer_planning",
-        "fundamental_writer",
-    }
+            "writer_planning",
+            "fundamental_writer",
+            "writer_section",
+            "final_synthesis",
+            "chart_data_extractor",
+        }
 
 
 def test_missing_profile_has_clear_error(tmp_path):

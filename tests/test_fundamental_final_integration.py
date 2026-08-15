@@ -39,19 +39,17 @@ class CancelDuringWriterClient(MockPiClient):
     def run_agent(self, **kwargs):
         raw_output = super().run_agent(**kwargs)
         context = kwargs["context"]
-        if context.get("node") != "fundamental_writer":
+        if not str(context.get("node", "")).startswith("writer_section_"):
             return raw_output
         self.service.request_cancel(context["run"]["run_id"])
-        output = json.loads(raw_output)
-        output["status"] = "needs_more_research"
-        output["missing_information"] = ["缺少主要业务分部收入数据"]
-        return json.dumps(output, ensure_ascii=False)
+        return raw_output
 
 
 def test_final_fundamental_flow_generates_writer_report_and_manifest(settings, session_factory) -> None:
     service, run_id, state = _execute(settings, session_factory)
     directory = settings.artifacts_dir / run_id
-    execution = next(item for item in RuntimeRepository(session_factory).list_executions(run_id) if item.node_name == "fundamental_writer")
+    executions = RuntimeRepository(session_factory).list_executions(run_id)
+    section_executions = [item for item in executions if item.node_name.startswith("writer_section_")]
     manifest = ResultManifestStore(directory, run_id, "fundamental_v1").load()
 
     assert service.get_run(run_id).status == "COMPLETED"
@@ -60,55 +58,140 @@ def test_final_fundamental_flow_generates_writer_report_and_manifest(settings, s
     assert (directory / "fundamental_report.md").is_file()
     assert (directory / "fundamental_research_package.md").is_file()
     assert (directory / "result_manifest.json").is_file()
-    assert execution.status == "COMPLETED"
-    assert execution.tool_call_count == 0
+    assert len(section_executions) == 3
+    assert all(item.status == "COMPLETED" and item.tool_call_count == 0 for item in section_executions)
     assert manifest.results["fundamental_report"].status == "current"
     assert manifest.results["fundamental_report"].version == 1
+
+
+def test_writer_stage_runs_three_scoped_section_agents_then_composes(settings, session_factory) -> None:
+    service, run_id, _state = _execute(settings, session_factory)
+    directory = settings.artifacts_dir / run_id
+    executions = RuntimeRepository(session_factory).list_executions(run_id)
+    section_executions = {
+        item.node_name: item
+        for item in executions
+        if item.node_name.startswith("writer_section_")
+    }
+
+    assert service.get_run(run_id).status == "COMPLETED"
+    assert set(section_executions) == {
+        "writer_section_business",
+        "writer_section_industry",
+        "writer_section_financial",
+    }
+    assert all(item.status == "COMPLETED" and item.tool_call_count == 0 for item in section_executions.values())
+    assert len({item.session_id for item in section_executions.values()}) == 3
+    assert not any(item.node_name == "fundamental_writer" for item in executions)
+    synthesis_execution = next(item for item in executions if item.node_name == "final_synthesis")
+    assert synthesis_execution.status == "COMPLETED"
+    assert synthesis_execution.tool_call_count == 0
+    for group in ("business", "industry", "financial"):
+        assert (directory / f"writer_section_{group}.json").is_file()
+    writer = json.loads((directory / "fundamental_writer.json").read_text(encoding="utf-8"))
+    assert writer["sections"]
+
+
+def test_final_synthesis_context_contains_drafts_not_raw_research(settings, session_factory) -> None:
+    _service_obj, run_id, _state = _execute(settings, session_factory)
+    executions = RuntimeRepository(session_factory).list_executions(run_id)
+    execution = next(item for item in executions if item.node_name == "final_synthesis")
+    context = json.loads(execution.input_context_json)
+    artifacts = context["artifacts"]
+
+    assert set(artifacts) == {
+        "lead_synthesis",
+        "writer_plan",
+        "writer_sections",
+        "financial_metrics_summary",
+        "valuation_result_summary",
+        "visual_layout_summary",
+    }
+    assert set(artifacts["writer_sections"]) == {"business", "industry", "financial"}
+    assert "evidence" not in artifacts
+    assert "retrieval_package" not in artifacts
+    assert "business_research" not in artifacts
+    assert "industry_research" not in artifacts
+    assert "deep_research" not in artifacts
+    assert set(artifacts["writer_plan"]) == {
+        "title",
+        "executive_focus",
+        "report_composition",
+    }
+    assert all(
+        set(item) == {"section_id", "title", "purpose", "narrative_order", "writer_group"}
+        for item in artifacts["writer_plan"]["report_composition"]
+    )
+    assert set(artifacts["lead_synthesis"]) == {
+        "report_mainline",
+        "executive_focus",
+        "sections",
+        "key_findings",
+        "conflicts",
+        "risks",
+        "missing_information",
+    }
+    assert all(
+        set(item) == {"section", "main_point"}
+        for item in artifacts["lead_synthesis"]["sections"]
+    )
+    assert len(execution.input_context_json) < 24_000
 
 
 def test_writer_execution_has_independent_session_and_scoped_safe_context(settings, session_factory) -> None:
     _service_obj, run_id, _state = _execute(settings, session_factory)
     executions = RuntimeRepository(session_factory).list_executions(run_id)
-    writer = next(item for item in executions if item.node_name == "fundamental_writer")
-    context = json.loads(writer.input_context_json)
-    artifacts = context["artifacts"]
-
     assert len({item.session_id for item in executions}) == len(executions)
-    assert set(artifacts) == {
-        "lead_synthesis", "writer_plan", "business_research", "industry_research", "deep_research",
-        "financial_research", "valuation_research", "lead_final_review", "retrieval_package", "assumptions",
-        "company_profile_summary", "financial_metrics_summary", "valuation_result_summary",
-    }
-    assert "financial_data" not in artifacts
-    assert "lead_plan" not in artifacts
-    assert "evidence" not in artifacts
-    assert "periods" not in artifacts["financial_metrics_summary"]
-    assert "market_snapshot" not in artifacts["valuation_result_summary"]
-    assert "content" not in artifacts["retrieval_package"]["items"][0]
-    assert len(artifacts["retrieval_package"]["items"][0]["excerpt"]) <= 240
+    section_executions = [item for item in executions if item.node_name.startswith("writer_section_")]
+    assert len(section_executions) == 3
+    assigned_ids: list[str] = []
+    for execution in section_executions:
+        context = json.loads(execution.input_context_json)
+        artifacts = context["artifacts"]
+        group = execution.node_name.removeprefix("writer_section_")
+        assert context["section_group"] == group
+        assert len(execution.input_context_json) < 20_000
+        assert "writer_assignment" in artifacts
+        assert "visuals" in artifacts
+        assert "evidence_materials" in artifacts
+        assert "financial_data" not in artifacts
+        assert "retrieval_package" not in artifacts
+        assigned_ids.extend(item["section_id"] for item in artifacts["writer_assignment"])
+        if group == "business":
+            assert set(artifacts["research_briefs"]) == {"business"}
+        elif group == "industry":
+            assert set(artifacts["research_briefs"]) == {"industry", "deep"}
+        else:
+            assert set(artifacts["research_briefs"]) == {"financial", "valuation"}
+            assert "periods" not in artifacts["financial_metrics_summary"]
+            assert "market_snapshot" not in artifacts["valuation_result_summary"]
+    assert len(assigned_ids) == len(set(assigned_ids))
 
 
-def test_lead_not_ready_skips_writer_and_requires_human_review(settings, session_factory) -> None:
+def test_lead_missing_optional_research_still_generates_best_available_report(settings, session_factory) -> None:
     service, run_id, state = _execute(settings, session_factory, "lead_not_ready")
     directory = settings.artifacts_dir / run_id
 
-    assert service.get_run(run_id).status == "HUMAN_REVIEW_REQUIRED"
-    assert state["error_message"] == "HUMAN_REVIEW_REQUIRED"
+    assert service.get_run(run_id).status == "COMPLETED"
+    assert state.get("error_message") is None
     assert (directory / "fundamental_research_package.md").is_file()
-    assert not (directory / "fundamental_writer.json").exists()
-    assert not (directory / "fundamental_report.md").exists()
-    assert all(item.node_name != "fundamental_writer" for item in RuntimeRepository(session_factory).list_executions(run_id))
+    assert (directory / "fundamental_writer.json").is_file()
+    assert (directory / "fundamental_report.md").is_file()
+    assert len([
+        item for item in RuntimeRepository(session_factory).list_executions(run_id)
+        if item.node_name.startswith("writer_section_")
+    ]) == 3
 
 
-def test_writer_needs_more_research_is_saved_without_formal_report(settings, session_factory) -> None:
+def test_composer_still_produces_best_available_report_when_research_has_gaps(settings, session_factory) -> None:
     service, run_id, _state = _execute(settings, session_factory, "writer_needs_more_research")
     directory = settings.artifacts_dir / run_id
     writer = json.loads((directory / "fundamental_writer.json").read_text(encoding="utf-8"))
 
-    assert service.get_run(run_id).status == "HUMAN_REVIEW_REQUIRED"
-    assert writer["status"] == "needs_more_research"
-    assert writer["missing_information"] == ["缺少主要业务分部收入数据"]
-    assert not (directory / "fundamental_report.md").exists()
+    assert service.get_run(run_id).status == "COMPLETED"
+    assert writer["status"] == "completed"
+    assert isinstance(writer["missing_information"], list)
+    assert (directory / "fundamental_report.md").is_file()
 
 
 def test_cancel_request_wins_when_writer_requests_human_review(settings, session_factory) -> None:
@@ -254,7 +337,7 @@ def test_active_checkpoint_stale_inputs_rebuild_from_earliest_affected_node(sett
     service = _service(settings, session_factory)
     run = service.create_run(symbol="贵州茅台", analysis_type="fundamental", as_of="2026-08-05")
     first = FundamentalWorkflow(
-        settings, session_factory, pi_client=MockPiClient(), interrupt_after=["fundamental_writer"]
+        settings, session_factory, pi_client=MockPiClient(), interrupt_after=["final_synthesis"]
     )
     try:
         first.run(run.run_id)

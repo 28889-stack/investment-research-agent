@@ -88,6 +88,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.lead_synthesis_profile,
         settings.writer_planning_profile,
         settings.fundamental_writer_profile,
+        settings.final_synthesis_profile,
+        settings.chart_data_extractor_profile,
     ):
         tool_registry.validate_profile_permissions(profile_loader.load(profile_id))
     workflow_status = workflow_build_status(settings, session_factory)
@@ -357,29 +359,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail="研究报告尚未生成") from exc
         except ReportFileMissingError as exc:
             raise HTTPException(status_code=404, detail="研究报告文件不存在") from exc
-        if run.analysis_type == "fundamental":
+        expected_html = {
+            "fundamental": "fundamental_report.html",
+            "technical": "technical_report.html",
+        }.get(run.analysis_type)
+        if expected_html:
             report_path = Path(run.report_path or "").resolve()
             artifact_dir = (settings.artifacts_dir / run.run_id).resolve()
-            if report_path.parent != artifact_dir or report_path.name != "fundamental_report.html":
+            if report_path.parent == artifact_dir and report_path.name == expected_html:
+                document = report_path.read_text(encoding="utf-8")
+                return Response(
+                    content=document,
+                    media_type="text/html; charset=utf-8",
+                    headers={
+                        "Content-Disposition": content_disposition(export_filename(run)),
+                        "X-Content-Type-Options": "nosniff",
+                    },
+                )
+            if run.analysis_type == "fundamental":
                 raise HTTPException(status_code=404, detail="基本面 HTML 报告文件不存在")
-            document = report_path.read_text(encoding="utf-8")
-            return Response(
-                content=document,
-                media_type="text/html; charset=utf-8",
-                headers={
-                    "Content-Disposition": content_disposition(export_filename(run)),
-                    "X-Content-Type-Options": "nosniff",
-                },
-            )
-        chart_bytes: bytes | None = None
-        if run.analysis_type == "technical":
-            run_dir = (settings.artifacts_dir / run.run_id).resolve()
-            chart_path = (run_dir / "technical_chart.png").resolve()
-            if chart_path.parent == run_dir and chart_path.is_file():
-                raw = chart_path.read_bytes()
-                if len(raw) <= settings.research_max_pdf_bytes:
-                    chart_bytes = raw
-        document = build_export_document(run, safe_html, chart_bytes)
+        # Preserve a safe export path for legacy technical Markdown artifacts.
+        document = build_export_document(run, safe_html, None)
         return Response(
             content=document,
             media_type="text/html; charset=utf-8",

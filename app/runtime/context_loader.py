@@ -11,6 +11,7 @@ from app.runtime.tool_registry import ToolRegistry
 from app.runtime.output_validator import output_model_for_schema
 from app.technical.schemas import KronosResult, TechnicalIndicators, TechnicalResearchOutput
 from app.fundamental.result_manifest import ResultManifestStore, sha256_file
+from app.fundamental.section_writer import allocate_report_sections
 from app.fundamental.schemas import (
     AssumptionStore,
     CompanyProfile,
@@ -27,7 +28,40 @@ from app.fundamental.schemas import (
     ValuationResult,
     RetrievalPackage,
     WriterPlanOutput,
+    WriterSectionOutput,
 )
+from app.charts.schemas import ReportVisuals
+
+
+def _compact_synthesis_artifacts(artifacts: dict[str, Any]) -> None:
+    """Remove repeated routing detail while preserving cited conclusions."""
+    for name in ("business_research", "industry_research"):
+        if isinstance(artifacts.get(name), dict):
+            artifacts[name].pop("topics", None)
+    retrieval_package = artifacts.get("retrieval_package")
+    if isinstance(retrieval_package, dict):
+        for item in retrieval_package.get("items", []):
+            if isinstance(item, dict):
+                item.pop("excerpt", None)
+
+
+def _compact_writer_artifacts(artifacts: dict[str, Any]) -> None:
+    """Keep the writer's distinct material while removing cross-stage repeats."""
+    _compact_synthesis_artifacts(artifacts)
+    writer_plan = artifacts.get("writer_plan")
+    if isinstance(writer_plan, dict):
+        for key in ("key_findings", "risks", "missing_information"):
+            writer_plan.pop(key, None)
+    final_review = artifacts.get("lead_final_review")
+    if isinstance(final_review, dict):
+        # Writer Plan owns the section arrangement; retain the final Lead's
+        # thesis, findings, conflicts and optimisation suggestions instead.
+        final_review.pop("approved_sections", None)
+        final_review.pop("report_outline", None)
+    lead_synthesis = artifacts.get("lead_synthesis")
+    if isinstance(lead_synthesis, dict):
+        # The final Lead review remains the authoritative conflict register.
+        lead_synthesis.pop("conflicts", None)
 
 
 class ContextLoader:
@@ -113,6 +147,16 @@ class ContextLoader:
             context = self._load_lead_synthesis_context(run, node_name, context_refs, task)
         elif schema_name == "writer_plan_output":
             context = self._load_writer_plan_context(run, node_name, context_refs, task)
+        elif schema_name == "evidence_chart_extraction_output":
+            context = self._load_chart_data_extractor_context(
+                run, node_name, context_refs, task
+            )
+        elif schema_name == "writer_section_output":
+            context = self._load_writer_section_context(run, node_name, context_refs, task)
+        elif schema_name == "final_synthesis_output":
+            context = self._load_final_synthesis_context(
+                run, node_name, context_refs, task
+            )
         elif schema_name == "fundamental_writer_output":
             context = self._load_fundamental_writer_context(
                 run, node_name, context_refs, task
@@ -153,6 +197,15 @@ class ContextLoader:
         artifacts = self._load_fundamental_artifacts(
             run, structured_refs, evidence_excerpt_chars=150
         )
+        # The final Lead only needs traceable evidence identifiers, claims and
+        # a short orientation cue. Full excerpts remain in the durable retrieval
+        # package for later Writer use, but repeating them here can crowd out
+        # the research conclusions that this node is meant to synthesize.
+        retrieval_package = artifacts.get("retrieval_package")
+        if isinstance(retrieval_package, dict):
+            for item in retrieval_package.get("items", []):
+                if isinstance(item, dict):
+                    item["excerpt"] = str(item.get("excerpt", ""))[:80]
         directory = self.run_service.artifacts_dir / run.run_id
         data = FinancialData.model_validate_json(
             (directory / "financial_data.json").read_text(encoding="utf-8")
@@ -201,12 +254,14 @@ class ContextLoader:
         }
         if set(context_refs) != required or len(context_refs) != len(required):
             raise ValueError("Lead Synthesis Artifact 引用不在专用白名单")
+        artifacts = self._load_fundamental_artifacts(run, context_refs)
+        _compact_synthesis_artifacts(artifacts)
         return {
             "run": {"run_id": run.run_id, "resolved_symbol": run.resolved_symbol, "security_name": run.security_name, "as_of": run.as_of},
             "node": node_name,
             "task": task,
             "allowed_tools": [],
-            "artifacts": self._load_fundamental_artifacts(run, context_refs),
+            "artifacts": artifacts,
             "output_schema": output_model_for_schema("lead_synthesis_output").model_json_schema(),
         }
 
@@ -274,6 +329,10 @@ class ContextLoader:
         artifacts = self._load_fundamental_artifacts(
             run, [f"artifact:{name}" for name in structured_names]
         )
+        # Writer receives the finished Lead mainline and Writer Plan, so use
+        # the same compact cited-conclusion view as Lead Synthesis while
+        # retaining Deep topics as the dedicated enrichment layer.
+        _compact_writer_artifacts(artifacts)
         company_model = CompanyProfile.model_validate_json(
             (directory / "company_profile.json").read_text(encoding="utf-8")
         )
@@ -332,6 +391,271 @@ class ContextLoader:
             "task": task,
             "artifacts": artifacts,
             "output_schema": output_model_for_schema("fundamental_writer_output").model_json_schema(),
+        }
+
+    def _load_writer_section_context(
+        self, run, node_name: str, context_refs: list[str], task: str
+    ) -> dict[str, Any]:
+        required = {
+            "artifact:lead_synthesis", "artifact:writer_plan", "artifact:business_research",
+            "artifact:industry_research", "artifact:deep_research", "artifact:financial_research",
+            "artifact:valuation_research", "artifact:retrieval_package", "artifact:assumptions",
+            "artifact:financial_metrics", "artifact:valuation_result",
+        }
+        if set(context_refs) != required or len(context_refs) != len(required):
+            raise ValueError("Section Writer Artifact 引用不在专用白名单")
+        prefix = "writer_section_"
+        group = node_name.removeprefix(prefix)
+        if not node_name.startswith(prefix) or group not in {"business", "industry", "financial"}:
+            raise ValueError("Section Writer 节点名称无效")
+        artifacts = self._load_fundamental_artifacts(run, context_refs)
+        allocation = allocate_report_sections(artifacts["writer_plan"])
+        assignment = [item.model_dump(mode="json") for item in allocation[group]]
+        if not assignment:
+            raise ValueError(f"Writer Plan 未给 {group} 分配专题")
+        allowed_evidence = {
+            evidence_id for item in assignment for evidence_id in item["allowed_evidence_ids"]
+        }
+        allowed_assumptions = {
+            assumption_id for item in assignment for assumption_id in item["allowed_assumption_ids"]
+        }
+        lead_sections = {
+            "business": {"business"},
+            "industry": {"industry"},
+            "financial": {"financial", "valuation"},
+        }[group]
+        synthesis = artifacts["lead_synthesis"]
+        scoped: dict[str, Any] = {
+            "writer_assignment": assignment,
+            "lead_mainline": {
+                "report_mainline": synthesis["report_mainline"],
+                "executive_focus": synthesis["executive_focus"],
+                "sections": [item for item in synthesis["sections"] if item["section"] in lead_sections],
+            },
+            "evidence_materials": [
+                {
+                    "evidence_id": item["evidence_id"], "claim": item["claim"],
+                    "source_name": item["source_name"], "date": item["date"],
+                    "url": item["url"], "excerpt": item["excerpt"][:500],
+                }
+                for item in artifacts["retrieval_package"]["items"]
+                if item["evidence_id"] in allowed_evidence
+            ],
+            "assumptions": [
+                item for item in artifacts["assumptions"]["items"]
+                if item["id"] in allowed_assumptions
+            ],
+        }
+        visuals_path = self.run_service.artifacts_dir / run.run_id / "report_visuals.json"
+        if visuals_path.is_file():
+            visuals = ReportVisuals.model_validate_json(
+                visuals_path.read_text(encoding="utf-8")
+            )
+            section_ids = {item["section_id"] for item in assignment}
+            scoped["visuals"] = [
+                chart.model_dump(mode="json")
+                for chart in visuals.charts
+                if chart.status == "generated" and chart.section_id in section_ids
+            ]
+        if group == "business":
+            scoped["research_briefs"] = {"business": artifacts["business_research"]}
+        elif group == "industry":
+            scoped["research_briefs"] = {
+                "industry": artifacts["industry_research"], "deep": artifacts["deep_research"]
+            }
+        else:
+            metrics = artifacts["financial_metrics"]
+            latest = metrics["periods"][-1] if metrics["periods"] else None
+            scoped["research_briefs"] = {
+                "financial": artifacts["financial_research"],
+                "valuation": artifacts["valuation_research"],
+            }
+            scoped["financial_metrics_summary"] = {
+                "latest_period": latest,
+                "latest": {
+                    name: (metrics.get(name) or {}).get(latest, {})
+                    for name in ("growth", "profitability", "balance_sheet", "cash_flow", "efficiency")
+                } if latest else {},
+            }
+            valuation = artifacts["valuation_result"]
+            scoped["valuation_result_summary"] = {
+                "relative": valuation["relative"], "dcf": valuation["dcf"],
+                "assumption_ids": valuation["assumption_ids"],
+            }
+        return {
+            "run": {
+                "run_id": run.run_id, "resolved_symbol": run.resolved_symbol,
+                "security_name": run.security_name, "as_of": run.as_of,
+            },
+            "node": node_name,
+            "section_group": group,
+            "task": task,
+            "artifacts": scoped,
+            "output_schema": output_model_for_schema("writer_section_output").model_json_schema(),
+        }
+
+    def _load_final_synthesis_context(
+        self, run, node_name: str, context_refs: list[str], task: str
+    ) -> dict[str, Any]:
+        required = {
+            "artifact:lead_synthesis",
+            "artifact:writer_plan",
+            "artifact:financial_metrics",
+            "artifact:valuation_result",
+        }
+        if set(context_refs) != required or len(context_refs) != len(required):
+            raise ValueError("Final Synthesis Artifact 引用不在专用白名单")
+        if node_name != "final_synthesis":
+            raise ValueError("Final Synthesis 节点名称无效")
+
+        artifacts = self._load_fundamental_artifacts(run, context_refs)
+        lead_synthesis = artifacts["lead_synthesis"]
+        artifacts["lead_synthesis"] = {
+            "report_mainline": lead_synthesis["report_mainline"],
+            "executive_focus": lead_synthesis["executive_focus"],
+            "sections": [
+                {
+                    "section": item["section"],
+                    "main_point": item["main_point"],
+                }
+                for item in lead_synthesis["sections"]
+            ],
+            "key_findings": lead_synthesis["key_findings"],
+            "conflicts": lead_synthesis["conflicts"],
+            "risks": lead_synthesis["risks"],
+            "missing_information": lead_synthesis["missing_information"],
+        }
+        writer_plan = artifacts["writer_plan"]
+        artifacts["writer_plan"] = {
+            "title": writer_plan["title"],
+            "executive_focus": writer_plan["executive_focus"],
+            "report_composition": [
+                {
+                    "section_id": item["section_id"],
+                    "title": item["title"],
+                    "purpose": item["purpose"],
+                    "narrative_order": item["narrative_order"],
+                    "writer_group": item["writer_group"],
+                }
+                for item in writer_plan["report_composition"]
+            ],
+        }
+        directory = self.run_service.artifacts_dir / run.run_id
+        completed = {
+            item.node_name: item
+            for item in self.repository.list_executions(run.run_id)
+            if item.status == "COMPLETED"
+        }
+        writer_sections: dict[str, Any] = {}
+        for group in ("business", "industry", "financial"):
+            node = f"writer_section_{group}"
+            path = directory / f"{node}.json"
+            execution = completed.get(node)
+            if execution is None or not execution.validated_output_json:
+                raise ValueError(f"Final Synthesis 缺少已校验的 {group} Writer 产物")
+            output = WriterSectionOutput.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
+            validated = WriterSectionOutput.model_validate_json(
+                execution.validated_output_json
+            )
+            if output != validated:
+                raise ValueError(f"Final Synthesis 的 {group} Writer 产物不是 current")
+            if output.symbol != run.resolved_symbol or output.as_of.isoformat() != run.as_of:
+                raise ValueError("Final Synthesis Writer 章节身份不一致")
+            writer_sections[group] = output.model_dump(mode="json")
+
+        metrics = FinancialMetrics.model_validate(artifacts.pop("financial_metrics"))
+        valuation = ValuationResult.model_validate(artifacts.pop("valuation_result"))
+        latest = metrics.periods[-1] if metrics.periods else None
+        artifacts["writer_sections"] = writer_sections
+        artifacts["financial_metrics_summary"] = {
+            "symbol": metrics.symbol,
+            "as_of": metrics.as_of.isoformat(),
+            "latest_period": latest,
+            "latest": {
+                group: getattr(metrics, group).get(latest, {})
+                for group in (
+                    "growth", "profitability", "balance_sheet", "cash_flow", "efficiency"
+                )
+            } if latest else {},
+            "missing_metrics": metrics.missing_metrics,
+        }
+        artifacts["valuation_result_summary"] = {
+            "symbol": valuation.symbol,
+            "as_of": valuation.as_of.isoformat(),
+            "relative": valuation.relative.model_dump(mode="json"),
+            "dcf": valuation.dcf.model_dump(mode="json"),
+            "assumption_ids": valuation.assumption_ids,
+        }
+        visuals_path = directory / "report_visuals.json"
+        if visuals_path.is_file():
+            visuals = ReportVisuals.model_validate_json(
+                visuals_path.read_text(encoding="utf-8")
+            )
+            artifacts["visual_layout_summary"] = [
+                {
+                    "chart_id": chart.chart_id,
+                    "section_id": chart.section_id,
+                    "title": chart.title,
+                    "placement": chart.placement,
+                    "status": chart.status,
+                }
+                for chart in visuals.charts
+            ]
+        return {
+            "run": {
+                "run_id": run.run_id,
+                "resolved_symbol": run.resolved_symbol,
+                "security_name": run.security_name,
+                "as_of": run.as_of,
+            },
+            "node": node_name,
+            "task": task,
+            "artifacts": artifacts,
+            "output_schema": output_model_for_schema(
+                "final_synthesis_output"
+            ).model_json_schema(),
+        }
+
+    def _load_chart_data_extractor_context(
+        self, run, node_name: str, context_refs: list[str], task: str
+    ) -> dict[str, Any]:
+        required = {"artifact:writer_plan", "artifact:evidence"}
+        if set(context_refs) != required or len(context_refs) != len(required):
+            raise ValueError("Chart Data Extractor Artifact 引用不在专用白名单")
+        if node_name != "chart_data_extractor":
+            raise ValueError("Chart Data Extractor 节点名称无效")
+        artifacts = self._load_fundamental_artifacts(
+            run, context_refs, evidence_excerpt_chars=700
+        )
+        plans = [
+            item for item in artifacts["writer_plan"].get("visual_plan", [])
+            if item.get("source_mode") in {"evidence", "mixed"}
+        ]
+        allowed = {
+            evidence_id
+            for plan in plans
+            for evidence_id in plan.get("allowed_evidence_ids", [])
+        }
+        evidence_items = [
+            item for item in artifacts["evidence"]["items"]
+            if item.get("id") in allowed
+        ]
+        return {
+            "run": {
+                "run_id": run.run_id,
+                "resolved_symbol": run.resolved_symbol,
+                "security_name": run.security_name,
+                "as_of": run.as_of,
+            },
+            "node": node_name,
+            "task": task,
+            "visual_plan": plans,
+            "evidence": {"items": evidence_items},
+            "output_schema": output_model_for_schema(
+                "evidence_chart_extraction_output"
+            ).model_json_schema(),
         }
 
     def _load_fundamental_artifacts(

@@ -34,9 +34,9 @@ class Settings(BaseModel):
     pi_model: str = ""
     pi_api_key_env_name: str = ""
     agent_profile_dir: Path = Path("./app/profiles")
-    max_agent_context_chars: int = Field(default=30_000, gt=0)
+    max_agent_context_chars: int = Field(default=50_000, gt=0)
     max_agent_output_chars: int = Field(default=20_000, gt=0)
-    max_tool_calls_per_node: int = Field(default=10, ge=0)
+    max_tool_calls_per_node: int = Field(default=25, ge=0)
     tool_default_timeout: float = Field(default=30.0, gt=0)
     output_repair_attempts: int = Field(default=1, ge=0, le=1)
     market_data_mode: str = Field(default="mock", pattern="^(mock|live)$")
@@ -75,6 +75,7 @@ class Settings(BaseModel):
     research_reader: str = Field(default="none", pattern="^(none|jina|firecrawl)$")
     research_reader_api_key_env_name: str = ""
     research_reader_timeout: float = Field(default=30, gt=0, le=120)
+    findkg_data_dir: Path = Path("./data/findkg/FinDKG")
     financial_metric_version: str = "financial_metric_v1"
     valuation_script_version: str = "valuation_v1"
     fundamental_lead_profile: str = "fundamental_lead"
@@ -86,6 +87,8 @@ class Settings(BaseModel):
     lead_synthesis_profile: str = "lead_synthesis"
     writer_planning_profile: str = "writer_planning"
     fundamental_writer_profile: str = "fundamental_writer"
+    final_synthesis_profile: str = "final_synthesis"
+    chart_data_extractor_profile: str = "chart_data_extractor"
     fundamental_workflow_version: str = "fundamental_v1"
 
     @classmethod
@@ -125,13 +128,13 @@ class Settings(BaseModel):
                 os.getenv("AGENT_PROFILE_DIR", "./app/profiles")
             ),
             max_agent_context_chars=int(
-                os.getenv("MAX_AGENT_CONTEXT_CHARS", "30000")
+                os.getenv("MAX_AGENT_CONTEXT_CHARS", "50000")
             ),
             max_agent_output_chars=int(
                 os.getenv("MAX_AGENT_OUTPUT_CHARS", "20000")
             ),
             max_tool_calls_per_node=int(
-                os.getenv("MAX_TOOL_CALLS_PER_NODE", "10")
+                os.getenv("MAX_TOOL_CALLS_PER_NODE", "25")
             ),
             tool_default_timeout=float(os.getenv("TOOL_DEFAULT_TIMEOUT", "30")),
             output_repair_attempts=int(os.getenv("OUTPUT_REPAIR_ATTEMPTS", "1")),
@@ -184,6 +187,7 @@ class Settings(BaseModel):
             research_reader=os.getenv("RESEARCH_READER", "none"),
             research_reader_api_key_env_name=os.getenv("RESEARCH_READER_API_KEY_ENV_NAME", ""),
             research_reader_timeout=float(os.getenv("RESEARCH_READER_TIMEOUT", "30")),
+            findkg_data_dir=Path(os.getenv("FINDKG_DATA_DIR", "./data/findkg/FinDKG")),
             financial_metric_version=os.getenv("FINANCIAL_METRIC_VERSION", "financial_metric_v1"),
             valuation_script_version=os.getenv("VALUATION_SCRIPT_VERSION", "valuation_v1"),
             fundamental_lead_profile=os.getenv("FUNDAMENTAL_LEAD_PROFILE", "fundamental_lead"),
@@ -195,5 +199,7 @@ class Settings(BaseModel):
             lead_synthesis_profile=os.getenv("LEAD_SYNTHESIS_PROFILE", "lead_synthesis"),
             writer_planning_profile=os.getenv("WRITER_PLANNING_PROFILE", "writer_planning"),
             fundamental_writer_profile=os.getenv("FUNDAMENTAL_WRITER_PROFILE", "fundamental_writer"),
+            final_synthesis_profile=os.getenv("FINAL_SYNTHESIS_PROFILE", "final_synthesis"),
+            chart_data_extractor_profile=os.getenv("CHART_DATA_EXTRACTOR_PROFILE", "chart_data_extractor"),
             fundamental_workflow_version=os.getenv("FUNDAMENTAL_WORKFLOW_VERSION", "fundamental_v1"),
         )

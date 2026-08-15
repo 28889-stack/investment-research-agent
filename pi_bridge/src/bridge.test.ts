@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { Bridge } from "./bridge.js";
 import type { ProtocolMessage } from "./protocol.js";
-import { summarizeUsage, validateLiveModel } from "./live-runtime.js";
+import { LiveAgentSession, summarizeUsage, validateLiveModel } from "./live-runtime.js";
 
 function request(id: string, type: string, payload: Record<string, unknown>): ProtocolMessage {
   return { id, type, payload };
@@ -26,6 +26,24 @@ const echoTool = {
   input_schema: { type: "object" },
   output_schema: { type: "object" },
 };
+
+test("live DeepSeek sessions enable medium thinking", () => {
+  const session = new LiveAgentSession(
+    {
+      sessionId: "deepseek-thinking-session",
+      profile: profile("constrained"),
+      model: { provider: "deepseek", name: "deepseek-v4-pro", runtime_mode: "live" },
+      tools: [],
+    },
+    "test",
+  );
+
+  const state = (
+    session as unknown as { agent: { state: { thinkingLevel: string } } }
+  ).agent.state;
+  assert.equal(state.thinkingLevel, "medium");
+  session.close();
+});
 
 test("health, isolated sessions, tool roundtrip, and close preserve request ids", async () => {
   const messages: ProtocolMessage[] = [];
@@ -290,6 +308,104 @@ test("fundamental writer mock remains constrained and emits no tool calls", asyn
   assert.match(String(output.payload.output), /asm_001/);
 });
 
+test("parallel writer mocks plan assigned topics and emit scoped section output", async () => {
+  const messages: ProtocolMessage[] = [];
+  const bridge = new Bridge((value) => messages.push(value), "mock");
+  bridge.handle(request("create-plan", "create_session", {
+    session_id: "writer-plan-session",
+    profile: { ...profile("constrained"), profile_id: "writer_planning" },
+    model: { runtime_mode: "mock" },
+    tools: [],
+  }));
+  bridge.handle(request("run-plan", "run_agent", {
+    session_id: "writer-plan-session",
+    context: {
+      node: "writer_planning",
+      run: { resolved_symbol: "600519.SH", as_of: "2026-08-05" },
+      artifacts: { lead_synthesis: { sections: [
+        { section: "business", main_point: "业务质量", allowed_evidence_ids: ["ev_001"], allowed_assumption_ids: [] },
+        { section: "industry", main_point: "行业周期", allowed_evidence_ids: ["ev_002"], allowed_assumption_ids: [] },
+        { section: "financial", main_point: "财务质量", allowed_evidence_ids: ["ev_001"], allowed_assumption_ids: ["asm_001"] },
+        { section: "valuation", main_point: "估值", allowed_evidence_ids: ["ev_001"], allowed_assumption_ids: ["asm_001"] },
+      ] } },
+    },
+    output_schema: {},
+  }));
+  await new Promise((resolve) => setImmediate(resolve));
+  const planned = messages.find((value) => value.id === "run-plan" && value.type === "response");
+  assert.ok(planned);
+  const plan = JSON.parse(String(planned.payload.output));
+  assert.equal(plan.report_composition.length, 4);
+  assert.deepEqual(plan.report_composition.map((item: Record<string, unknown>) => item.writer_group), [
+    "business", "industry", "financial", "financial",
+  ]);
+
+  bridge.handle(request("create-section", "create_session", {
+    session_id: "writer-section-session",
+    profile: { ...profile("constrained"), profile_id: "writer_section" },
+    model: { runtime_mode: "mock" },
+    tools: [],
+  }));
+  bridge.handle(request("run-section", "run_agent", {
+    session_id: "writer-section-session",
+    context: {
+      node: "writer_section_business", section_group: "business",
+      run: { resolved_symbol: "600519.SH", as_of: "2026-08-05" },
+      artifacts: { writer_assignment: [plan.report_composition[0]] },
+    },
+    output_schema: {},
+  }));
+  await new Promise((resolve) => setImmediate(resolve));
+  const written = messages.find((value) => value.id === "run-section" && value.type === "response");
+  assert.ok(written);
+  const section = JSON.parse(String(written.payload.output));
+  assert.equal(section.section_group, "business");
+  assert.equal(section.sections[0].section_id, "business-analysis");
+});
+
+test("final synthesis mock emits bounded edit instructions instead of rewritten sections", async () => {
+  const messages: ProtocolMessage[] = [];
+  const bridge = new Bridge((value) => messages.push(value), "mock");
+  bridge.handle(request("create-synthesis", "create_session", {
+    session_id: "final-synthesis-session",
+    profile: { ...profile("constrained"), profile_id: "final_synthesis" },
+    model: { runtime_mode: "mock" },
+    tools: [],
+  }));
+  bridge.handle(request("run-synthesis", "run_agent", {
+    session_id: "final-synthesis-session",
+    context: {
+      node: "final_synthesis",
+      run: { resolved_symbol: "600519.SH", as_of: "2026-08-05" },
+      artifacts: {
+        lead_synthesis: { executive_focus: "业务、行业与财务联动" },
+        writer_plan: { report_composition: [
+          { section_id: "industry-analysis", narrative_order: 1 },
+          { section_id: "business-analysis", narrative_order: 2 },
+        ] },
+        writer_sections: {
+          business: { sections: [{ section_id: "business-analysis", body: "业务原稿" }] },
+          industry: { sections: [{ section_id: "industry-analysis", body: "行业原稿" }] },
+          financial: { sections: [{ section_id: "financial-analysis", body: "财务原稿" }] },
+        },
+      },
+    },
+    output_schema: {},
+  }));
+  await new Promise((resolve) => setImmediate(resolve));
+  const response = messages.find(
+    (value) => value.id === "run-synthesis" && value.type === "response"
+  );
+  assert.ok(response);
+  assert.equal(messages.filter((value) => value.type === "tool_call").length, 0);
+  const output = JSON.parse(String(response.payload.output));
+  assert.deepEqual(output.section_order, [
+    "industry-analysis", "business-analysis", "financial-analysis",
+  ]);
+  assert.deepEqual(output.text_edits, []);
+  assert.equal("sections" in output, false);
+});
+
 test("live usage summary aggregates provider tokens and reported cost", () => {
   const usage = summarizeUsage([
     { role: "assistant", usage: { input: 10, output: 4, totalTokens: 14, cost: { total: 0.01 } } },
@@ -325,9 +441,9 @@ test("live model preflight rejects an unknown provider model pair", () => {
   );
 });
 
-test("live model preflight accepts the native DeepSeek flash model", () => {
-  const { model } = validateLiveModel("deepseek", "deepseek-v4-flash");
+test("live model preflight accepts the native DeepSeek pro model", () => {
+  const { model } = validateLiveModel("deepseek", "deepseek-v4-pro");
 
   assert.equal(model.provider, "deepseek");
-  assert.equal(model.id, "deepseek-v4-flash");
+  assert.equal(model.id, "deepseek-v4-pro");
 });

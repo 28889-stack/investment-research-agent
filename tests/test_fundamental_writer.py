@@ -9,8 +9,17 @@ from app.fundamental.schemas import (
     AssumptionStore,
     EvidenceCollection,
     EvidenceItem,
+    FinalSynthesisOutput,
     FundamentalWriterOutput,
+    ReportCompositionSection,
+    WriterSectionOutput,
     validate_references,
+)
+from app.fundamental.section_writer import (
+    apply_final_synthesis_edits,
+    allocate_report_sections,
+    compose_section_outputs,
+    validate_section_output_assignment,
 )
 from app.runtime.context_loader import ContextLoader
 from app.runtime.output_validator import OutputValidator
@@ -79,6 +88,186 @@ def test_writer_schema_is_registered_strict_and_reference_validated() -> None:
             "fundamental_writer_output",
         )
     assert unknown.value.code == "FORBIDDEN_FIELD"
+
+
+def test_writer_schema_supports_variable_thematic_sections_with_continuous_prose() -> None:
+    payload = _writer_payload(
+        sections=[
+            {
+                "section_id": "asset-expansion",
+                "title": "核心资产的扩产节奏",
+                "main_claim": "扩产项目决定中期供给弹性。",
+                "body": "项目投放需要同时观察建设节奏、爬坡效率与商品价格环境。已披露的资产资料支持将产能释放与经营质量放在同一专题中理解，而不是把项目名称逐条罗列。",
+                "evidence_ids": ["ev_001"],
+                "assumption_ids": [],
+                "observation_points": ["项目投产时间", "爬坡达产率"],
+            }
+        ]
+    )
+
+    parsed = FundamentalWriterOutput.model_validate(payload)
+    evidence, assumptions = _references()
+    validate_references(parsed, evidence, assumptions)
+
+    assert parsed.sections[0].title == "核心资产的扩产节奏"
+    assert "项目投放" in parsed.sections[0].body
+
+
+def test_composer_merges_disjoint_section_outputs_without_new_references() -> None:
+    outputs = [
+        WriterSectionOutput(symbol="600519.SH", as_of="2026-08-05", section_group="business", sections=[
+            {"section_id": "business-core", "title": "业务", "main_claim": "业务基础稳固", "body": "业务结构和竞争能力共同决定经营基础，需持续观察核心产品、客户结构、区域布局以及经营效率的变化。", "evidence_ids": ["ev_001"]}
+        ]),
+        WriterSectionOutput(symbol="600519.SH", as_of="2026-08-05", section_group="industry", sections=[
+            {"section_id": "industry-cycle", "title": "行业", "main_claim": "行业仍有周期波动", "body": "行业供需和价格环境会影响盈利表现，应结合供给约束、库存变化、终端需求和政策扰动持续跟踪。", "evidence_ids": ["ev_002"]}
+        ]),
+        WriterSectionOutput(symbol="600519.SH", as_of="2026-08-05", section_group="financial", sections=[
+            {"section_id": "financial-quality", "title": "财务", "main_claim": "现金流质量需要验证", "body": "盈利、现金流与资本开支需要联合观察，不能仅依据单期利润或短期市况判断经营质量，也要结合资产负债表结构。", "evidence_ids": ["ev_001"], "assumption_ids": ["asm_001"]}
+        ]),
+    ]
+
+    composed = compose_section_outputs(
+        symbol="600519.SH", as_of="2026-08-05", outputs=outputs,
+        executive_summary="围绕业务、行业和财务质量展开。", key_findings=["业务与周期并存"],
+        conflicts=["需观察周期变化"], risks=["需求风险"], missing_information=[],
+    )
+
+    assert [section.section_id for section in composed.sections] == ["business-core", "industry-cycle", "financial-quality"]
+    assert composed.financial.assumption_ids == ["asm_001"]
+    validate_references(composed, *_references())
+
+
+def test_final_synthesis_applies_local_edits_without_rewriting_writer_sections() -> None:
+    outputs = [
+        WriterSectionOutput(symbol="600519.SH", as_of="2026-08-05", section_group="business", sections=[
+            {"section_id": "business-core", "title": "业务", "main_claim": "业务基础稳固", "body": "业务结构和竞争能力共同决定经营基础。\n\n需持续观察核心产品、客户结构、区域布局以及经营效率的变化。", "evidence_ids": ["ev_001"]}
+        ]),
+        WriterSectionOutput(symbol="600519.SH", as_of="2026-08-05", section_group="industry", sections=[
+            {"section_id": "industry-cycle", "title": "行业", "main_claim": "行业仍有周期波动", "body": "行业供需和价格环境会影响盈利表现，应结合供给约束、库存变化、终端需求和政策扰动持续跟踪。", "evidence_ids": ["ev_002"]}
+        ]),
+        WriterSectionOutput(symbol="600519.SH", as_of="2026-08-05", section_group="financial", sections=[
+            {"section_id": "financial-quality", "title": "财务", "main_claim": "现金流质量需要验证", "body": "盈利、现金流与资本开支需要联合观察，不能仅依据单期利润或短期市况判断经营质量，也要结合资产负债表结构。", "evidence_ids": ["ev_001"], "assumption_ids": ["asm_001"]}
+        ]),
+    ]
+    edits = FinalSynthesisOutput(
+        symbol="600519.SH",
+        as_of="2026-08-05",
+        section_order=["industry-cycle", "business-core", "financial-quality"],
+        text_edits=[{
+            "section_id": "business-core",
+            "field": "body",
+            "target_text": "需持续观察核心产品",
+            "replacement_text": "需持续跟踪核心产品",
+            "reason": "clarity",
+        }],
+        transitions=[{
+            "before_section_id": "financial-quality",
+            "text": "上述业务能力和行业环境最终会反映到盈利质量与现金流表现中。",
+        }],
+        executive_summary="报告围绕业务能力、行业周期和财务兑现展开。",
+        conclusion="公司的经营表现需要结合行业环境与财务兑现持续观察。",
+        edit_summary=["调整章节顺序并统一观察口径"],
+    )
+
+    composed = apply_final_synthesis_edits(
+        symbol="600519.SH",
+        as_of="2026-08-05",
+        outputs=outputs,
+        edits=edits,
+        key_findings=["业务与周期并存"],
+        conflicts=["需观察周期变化"],
+        risks=["需求风险"],
+        optimization_suggestions=["补充渠道效率的连续披露"],
+    )
+
+    assert [section.section_id for section in composed.sections] == [
+        "industry-cycle", "business-core", "financial-quality"
+    ]
+    assert "业务结构和竞争能力共同决定经营基础" in composed.sections[1].body
+    assert "需持续跟踪核心产品" in composed.sections[1].body
+    assert composed.sections[1].evidence_ids == ["ev_001"]
+    assert composed.sections[2].body.startswith("上述业务能力和行业环境")
+    assert composed.missing_information == ["补充渠道效率的连续披露"]
+
+
+def test_final_synthesis_requires_an_exact_permutation_of_writer_sections() -> None:
+    outputs = [
+        WriterSectionOutput(symbol="600519.SH", as_of="2026-08-05", section_group="business", sections=[
+            {"section_id": "business-core", "title": "业务", "main_claim": "业务基础稳固", "body": "业务结构和竞争能力共同决定经营基础，需持续观察核心产品、客户结构、区域布局以及经营效率的变化。", "evidence_ids": ["ev_001"]}
+        ]),
+        WriterSectionOutput(symbol="600519.SH", as_of="2026-08-05", section_group="industry", sections=[
+            {"section_id": "industry-cycle", "title": "行业", "main_claim": "行业仍有周期波动", "body": "行业供需和价格环境会影响盈利表现，应结合供给约束、库存变化、终端需求和政策扰动持续跟踪。", "evidence_ids": ["ev_002"]}
+        ]),
+        WriterSectionOutput(symbol="600519.SH", as_of="2026-08-05", section_group="financial", sections=[
+            {"section_id": "financial-quality", "title": "财务", "main_claim": "现金流质量需要验证", "body": "盈利、现金流与资本开支需要联合观察，不能仅依据单期利润或短期市况判断经营质量，也要结合资产负债表结构。", "evidence_ids": ["ev_001"], "assumption_ids": ["asm_001"]}
+        ]),
+    ]
+    edits = FinalSynthesisOutput(
+        symbol="600519.SH", as_of="2026-08-05",
+        section_order=["business-core", "financial-quality"],
+        executive_summary="围绕业务和财务展开。",
+        conclusion="结合证据与风险理解。",
+    )
+
+    with pytest.raises(ValueError, match="必须且只能包含全部 Writer 专题"):
+        apply_final_synthesis_edits(
+            symbol="600519.SH", as_of="2026-08-05", outputs=outputs, edits=edits,
+            key_findings=[], conflicts=[], risks=[], optimization_suggestions=[],
+        )
+
+
+def test_final_synthesis_profile_is_editorial_and_tool_free(settings) -> None:
+    profile = ProfileLoader(settings.agent_profile_dir).load("final_synthesis")
+
+    assert profile.mode == "constrained"
+    assert profile.allowed_tools == []
+    assert profile.max_iterations == 1
+    assert profile.max_tool_calls == 0
+    assert profile.context_policy == "final_synthesis_scoped"
+    assert profile.output_schema == "final_synthesis_output"
+    assert "不得重写整篇报告" in profile.system_prompt
+    assert "局部编辑" in profile.system_prompt
+
+
+def test_section_allocation_assigns_each_composition_to_exactly_one_writer_group() -> None:
+    plan = {
+        "sections": [
+            {"section": "business", "purpose": "业务", "narrative_order": 1, "allowed_evidence_ids": ["ev_001"]},
+            {"section": "industry", "purpose": "行业", "narrative_order": 2, "allowed_evidence_ids": ["ev_002"]},
+            {"section": "financial", "purpose": "财务", "narrative_order": 3, "allowed_evidence_ids": ["ev_001"], "allowed_assumption_ids": ["asm_001"]},
+            {"section": "valuation", "purpose": "估值", "narrative_order": 4, "allowed_evidence_ids": ["ev_001"], "allowed_assumption_ids": ["asm_001"]},
+        ],
+        "report_composition": [
+            {"section_id": "business-core", "title": "业务", "purpose": "业务质量分析", "narrative_order": 1, "allowed_evidence_ids": ["ev_001"]},
+            {"section_id": "industry-cycle", "title": "行业", "purpose": "供需关系分析", "narrative_order": 2, "allowed_evidence_ids": ["ev_002"]},
+            {"section_id": "financial-quality", "title": "财务", "purpose": "现金流质量分析", "narrative_order": 3, "allowed_evidence_ids": ["ev_001"], "allowed_assumption_ids": ["asm_001"]},
+        ],
+    }
+
+    allocation = allocate_report_sections(plan)
+
+    assert [item.section_id for item in allocation["business"]] == ["business-core"]
+    assert [item.section_id for item in allocation["industry"]] == ["industry-cycle"]
+    assert [item.section_id for item in allocation["financial"]] == ["financial-quality"]
+
+
+def test_section_writer_cannot_use_references_outside_its_assignment() -> None:
+    assignments = [
+        ReportCompositionSection(
+            section_id="business-core", title="业务", purpose="业务质量分析",
+            narrative_order=1, allowed_evidence_ids=["ev_001"], writer_group="business",
+        )
+    ]
+    output = WriterSectionOutput(
+        symbol="600519.SH", as_of="2026-08-05", section_group="business", sections=[{
+            "section_id": "business-core", "title": "业务", "main_claim": "业务基础稳固",
+            "body": "业务结构和竞争能力共同决定经营基础，需持续观察核心产品、客户结构、区域布局以及经营效率的变化。",
+            "evidence_ids": ["ev_002"],
+        }],
+    )
+
+    with pytest.raises(ValueError, match="未分配的 Evidence"):
+        validate_section_output_assignment(output, assignments)
 
 
 @pytest.mark.parametrize(

@@ -41,12 +41,14 @@ backups/
 .mvp-maintenance.lock
 tmp/
 temp/
+.superpowers/
 
 # Runtime data
 data/*.db
 data/*.db-*
 data/artifacts/*
 !data/artifacts/.gitkeep
+data/findkg/
 
 # Reproducibly installed by scripts/setup_kronos.py
 vendor/kronos/

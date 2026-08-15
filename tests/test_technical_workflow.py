@@ -69,15 +69,18 @@ def test_technical_workflow_generates_all_artifacts_and_authoritative_report(
         "market_data.csv",
         "technical_indicators.json",
         "technical_research.json",
+        "technical_visuals.json",
+        "technical_chart.png",
         "kronos_result.json",
         "technical_assembly.json",
-        "technical_chart.png",
+        "technical_report.html",
         "technical_report.md",
     }
     assert expected.issubset({path.name for path in directory.iterdir()})
     indicators = json.loads((directory / "technical_indicators.json").read_text())
     kronos = json.loads((directory / "kronos_result.json").read_text())
-    report = (directory / "technical_report.md").read_text(encoding="utf-8")
+    report = (directory / "technical_report.html").read_text(encoding="utf-8")
+    assert "图 1：" in report
     assert str(indicators["support_resistance"]["support_20"]) in report
     assert f"{kronos['direction_probability']['up'] * 100:.2f}%" in report
     assert "本报告不构成投资建议、交易指令或收益承诺。" in report
@@ -88,7 +91,27 @@ def test_technical_workflow_generates_all_artifacts_and_authoritative_report(
     ]
     assert executions[0].tool_call_count == 3
     assert executions[1].tool_call_count == 0
-    assert state["report_path"] == str(directory / "technical_report.md")
+    assert '<canvas data-chart="' in report
+    assert 'class="technical-market-image"' in report
+    assert 'src="data:image/png;base64,' in report
+    assert "drawTechnicalChart" in report
+    assert report.index("二、趋势分析") < report.index(
+        'class="technical-market-image"'
+    ) < report.index("三、量价关系")
+    assert report.index("三、量价关系") < report.index("七、技术形态候选")
+    if indicators["patterns"]:
+        assert report.index("七、技术形态候选") < report.index(
+            'class="pattern-visual"'
+        )
+        assert 'class="signal-rules"' in report
+    else:
+        assert report.index("七、技术形态候选") < report.index(
+            'class="visual-empty"'
+        )
+    assert 'aria-label="本次识别的技术形态图表"' not in report
+    assert (directory / "technical_chart.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert f"/api/runs/{run_id}/artifacts/technical_chart.png" not in report
+    assert state["report_path"] == str(directory / "technical_report.html")
 
 
 def test_technical_workflow_resume_does_not_repeat_research(settings, session_factory):
@@ -112,6 +135,31 @@ def test_technical_workflow_resume_does_not_repeat_research(settings, session_fa
     assert [item.execution_id for item in executions[:1]] == [first[0].execution_id]
     assert len([item for item in executions if item.profile_id == "technical_research"]) == 1
     assert service.get_run(run_id).status == "COMPLETED"
+
+
+def test_technical_market_overview_failure_blocks_report_generation(
+    settings, session_factory, monkeypatch
+):
+    def fail_visuals(*_args, **_kwargs):
+        raise RuntimeError("canvas unavailable")
+
+    monkeypatch.setattr(
+        "app.tools.technical_tools.build_technical_visuals",
+        fail_visuals,
+    )
+    service = RunService(session_factory, settings.artifacts_dir)
+    run_id = create_claimed_run(service)
+    workflow = make_workflow(settings, session_factory)
+    try:
+        state = workflow.run(run_id)
+    finally:
+        workflow.shutdown()
+
+    directory = settings.artifacts_dir / run_id
+    assert service.get_run(run_id).status == "FAILED"
+    assert state["error_message"] == "TECHNICAL_AGENT_FAILED"
+    assert not (directory / "technical_visuals.json").exists()
+    assert not (directory / "technical_report.html").exists()
 
 
 def test_recovery_rebuilds_artifacts_when_market_csv_hash_changes(
@@ -154,7 +202,7 @@ def test_recovery_replaces_stale_existing_report(settings, session_factory):
     )
     interrupted.run(run_id)
     interrupted.shutdown()
-    report_path = settings.artifacts_dir / run_id / "technical_report.md"
+    report_path = settings.artifacts_dir / run_id / "technical_report.html"
     report_path.write_text("stale report", encoding="utf-8")
 
     resumed = make_workflow(settings, session_factory)
@@ -164,7 +212,24 @@ def test_recovery_replaces_stale_existing_report(settings, session_factory):
         resumed.shutdown()
     report = report_path.read_text(encoding="utf-8")
     assert "stale report" not in report
-    assert "# 个股技术面分析报告" in report
+    assert "个股技术面分析报告" in report
+
+
+def test_native_report_embeds_the_generated_baseline_chart(settings, session_factory):
+    service = RunService(session_factory, settings.artifacts_dir)
+    run_id = create_claimed_run(service)
+    workflow = make_workflow(settings, session_factory)
+    try:
+        workflow.run(run_id)
+    finally:
+        workflow.shutdown()
+    directory = settings.artifacts_dir / run_id
+    assert service.get_run(run_id).status == "COMPLETED"
+    image = directory / "technical_chart.png"
+    assert image.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    report = (directory / "technical_report.html").read_text(encoding="utf-8")
+    assert 'class="technical-market-image"' in report
+    assert 'src="data:image/png;base64,' in report
 
 
 def test_checkpoint_thread_is_always_isolated_by_run_id(settings, session_factory):
@@ -221,10 +286,9 @@ def test_technical_report_api_exposes_versions_and_scoped_chart(
     assert payload["data_version"].startswith("600519.SH_20260805_")
     assert payload["indicator_version"] == "tech_indicator_v1"
     assert payload["kronos_model_version"] == "mock_kronos_v1"
-    assert "<img" in payload["html"]
-    chart = client.get(payload["chart_url"])
-    assert chart.status_code == 200
-    assert chart.headers["content-type"] == "image/png"
+    assert "<canvas" in payload["html"]
+    assert 'src="data:image/png;base64,' in payload["html"]
+    assert payload["chart_url"] == f"/api/runs/{run_id}/artifacts/technical_chart.png"
     assert client.get("/api/runs/not-found/artifacts/technical_chart.png").status_code == 404
 
 
