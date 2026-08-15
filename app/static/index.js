@@ -6,6 +6,11 @@ const historyError = document.querySelector("#history-error");
 const runList = document.querySelector("#run-list");
 const symbolInput = document.querySelector("#symbol");
 const modeInputs = [...document.querySelectorAll('input[name="analysis_type"]')];
+const accessGate = document.querySelector("#access-gate");
+const accessForm = document.querySelector("#access-form");
+const accessError = document.querySelector("#access-error");
+const accessSubmit = document.querySelector("#access-submit");
+const inviteCodeInput = document.querySelector("#invite-code");
 
 const analysisLabels = {
   technical: "技术面分析",
@@ -38,11 +43,52 @@ document.querySelector("#as-of").value = formatLocalDate(new Date());
 modeInputs.forEach((input) => input.addEventListener("change", renderWorkflowPreview));
 form.addEventListener("submit", createRun);
 refreshButton.addEventListener("click", loadRuns);
+accessForm.addEventListener("submit", submitInviteCode);
 
-setupSpotlight();
-renderWorkflowPreview();
-loadRuns();
-symbolInput.focus({ preventScroll: true });
+bootstrapAccess();
+
+async function bootstrapAccess() {
+  try {
+    const response = await fetch("/api/auth/session");
+    const session = await readJson(response);
+    if (response.ok && session.authenticated) {
+      startWorkspace();
+      return;
+    }
+  } catch {
+    // The access form presents a usable retry path when the service starts.
+  }
+  accessGate.hidden = false;
+  inviteCodeInput.focus({ preventScroll: true });
+}
+
+function startWorkspace() {
+  accessGate.hidden = true;
+  setupSpotlight();
+  renderWorkflowPreview();
+  loadRuns();
+  symbolInput.focus({ preventScroll: true });
+}
+
+async function submitInviteCode(event) {
+  event.preventDefault();
+  hideNotice(accessError);
+  setButtonLoading(accessSubmit, true, "正在验证…");
+  try {
+    const response = await fetch("/api/auth/invite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ invite_code: inviteCodeInput.value }),
+    });
+    const body = await readJson(response);
+    if (!response.ok) throw new Error(errorMessage(body, "邀请码验证失败"));
+    inviteCodeInput.value = "";
+    startWorkspace();
+  } catch (error) {
+    showNotice(accessError, error.message);
+    setButtonLoading(accessSubmit, false, "进入工作台");
+  }
+}
 
 async function createRun(event) {
   event.preventDefault();

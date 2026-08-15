@@ -1777,6 +1777,29 @@ tbody tr:hover {
   }
 }
 
+.access-gate {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(4, 6, 12, .72);
+  backdrop-filter: blur(18px);
+}
+
+.access-gate-card {
+  width: min(100%, 420px);
+  padding: 34px;
+  border: 1px solid rgba(173, 198, 255, .24);
+}
+
+.access-gate-card h1 { margin: 4px 0 8px; font-size: 28px; }
+.access-gate-card p { color: #aebbd3; line-height: 1.7; }
+.access-gate-card .field { display: grid; gap: 8px; margin: 24px 0 14px; }
+.access-gate-card .button { width: 100%; justify-content: center; }
+.access-gate-eyebrow { margin: 0; color: #91b8ff !important; font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+
 /* Eclipse Glass: the application shell only. The standalone report keeps its own theme. */
 .app-page {
   --app-bg: #07080b;

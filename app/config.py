@@ -14,6 +14,10 @@ class Settings(BaseModel):
     app_host: str = "127.0.0.1"
     app_port: int = Field(default=8000, ge=1, le=65535)
     allow_public_bind: bool = False
+    access_auth_enabled: bool = False
+    access_invite_code: str = ""
+    access_cookie_secret: str = ""
+    access_cookie_secure: bool = False
     storage_root: Path = Path(".")
     database_url: str = "sqlite:///./data/research.db"
     artifacts_dir: Path = Path("./data/artifacts")
@@ -94,11 +98,18 @@ class Settings(BaseModel):
     @classmethod
     def from_env(cls) -> "Settings":
         load_dotenv()
+        app_env = os.getenv("APP_ENV", "development")
         return cls(
-            app_env=os.getenv("APP_ENV", "development"),
+            app_env=app_env,
             app_host=os.getenv("APP_HOST", "127.0.0.1"),
-            app_port=int(os.getenv("APP_PORT", "8000")),
+            app_port=int(os.getenv("PORT", os.getenv("APP_PORT", "8000"))),
             allow_public_bind=os.getenv("ALLOW_PUBLIC_BIND", "false").lower() in {"1", "true", "yes", "on"},
+            access_auth_enabled=os.getenv("ACCESS_AUTH_ENABLED", "false").lower() in {"1", "true", "yes", "on"},
+            access_invite_code=os.getenv("ACCESS_INVITE_CODE", ""),
+            access_cookie_secret=os.getenv("ACCESS_COOKIE_SECRET", ""),
+            access_cookie_secure=os.getenv(
+                "ACCESS_COOKIE_SECURE", "true" if app_env == "production" else "false"
+            ).lower() in {"1", "true", "yes", "on"},
             storage_root=Path(os.getenv("STORAGE_ROOT", ".")),
             database_url=os.getenv("DATABASE_URL", "sqlite:///./data/research.db"),
             artifacts_dir=Path(os.getenv("ARTIFACTS_DIR", "./data/artifacts")),

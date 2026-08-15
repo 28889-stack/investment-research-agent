@@ -155,6 +155,11 @@ def configuration_issues(
             )
     if settings.app_host in {"0.0.0.0", "::", "[::]"} and not settings.allow_public_bind:
         issues.append("APP_HOST 为公网绑定地址时必须设置 ALLOW_PUBLIC_BIND=true")
+    if settings.access_auth_enabled:
+        if not settings.access_invite_code:
+            issues.append("ACCESS_INVITE_CODE 不能为空")
+        if not settings.access_cookie_secret:
+            issues.append("ACCESS_COOKIE_SECRET 不能为空")
     storage_root = settings.storage_root.resolve()
     if storage_root == Path("/"):
         issues.append("STORAGE_ROOT 不能指向文件系统根目录")
@@ -317,6 +322,8 @@ def readiness_report(
         "fundamental_workflow": False,
     }
     checks = {
+        "access_auth": (not settings.access_auth_enabled)
+        or bool(settings.access_invite_code and settings.access_cookie_secret),
         "database": _sqlite_ready(
             _sqlite_path(settings.database_url),
             {"research_runs", "run_events", "agent_executions", "tool_executions"},

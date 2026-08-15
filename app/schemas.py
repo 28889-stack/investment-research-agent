@@ -24,6 +24,10 @@ class RunCreate(BaseModel):
         return value
 
 
+class InviteCodeLogin(BaseModel):
+    invite_code: str = Field(min_length=1, max_length=512)
+
+
 class RunCreated(BaseModel):
     run_id: str
     status: str

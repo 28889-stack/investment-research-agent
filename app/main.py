@@ -4,7 +4,7 @@ import logging
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
@@ -30,7 +30,9 @@ from app.schemas import (
     RunEventResponse,
     RunSummary,
     RuntimeHealth,
+    InviteCodeLogin,
 )
+from app.access_auth import InviteAuthenticator
 from app.runtime.profiles import ProfileLoader
 from app.runtime.repository import RuntimeRepository
 from app.runtime.output_validator import output_model_for_schema
@@ -102,6 +104,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.runtime_repository = runtime_repository
     app.state.profile_loader = profile_loader
     app.state.tool_registry = tool_registry
+    access_auth = InviteAuthenticator(settings)
+    app.state.access_auth = access_auth
 
     @app.middleware("http")
     async def structured_request_log(request, call_next):
@@ -119,6 +123,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             extra={"component": "web", "node": request.url.path, "duration_ms": int((time.monotonic() - started) * 1000), "status": str(response.status_code)},
         )
         return response
+
+    @app.middleware("http")
+    async def require_invite_access(request: Request, call_next):
+        if (
+            not access_auth.enabled
+            or not request.url.path.startswith("/api/")
+            or access_auth.is_public_api_path(request.url.path)
+            or access_auth.is_authenticated(request.cookies.get(access_auth.cookie_name))
+        ):
+            return await call_next(request)
+        return _json_error(401, "请输入有效邀请码以继续使用")
     app.mount(
         "/static",
         StaticFiles(directory=STATIC_DIR, check_dir=False),
@@ -159,6 +174,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 else "unavailable"
             ),
         )
+
+    @app.post("/api/auth/invite", status_code=204)
+    def exchange_invite(payload: InviteCodeLogin, response: Response) -> None:
+        if not access_auth.verify_invite(payload.invite_code):
+            raise HTTPException(status_code=401, detail="邀请码无效")
+        access_auth.grant(response)
+
+    @app.get("/api/auth/session")
+    def access_session(request: Request) -> dict[str, bool]:
+        return {
+            "authenticated": access_auth.is_authenticated(
+                request.cookies.get(access_auth.cookie_name)
+            )
+        }
+
+    @app.post("/api/auth/logout", status_code=204)
+    def logout_access(response: Response) -> None:
+        access_auth.revoke(response)
 
     @app.post("/api/runs", response_model=RunCreated, status_code=201)
     def create_run(payload: RunCreate) -> RunCreated:

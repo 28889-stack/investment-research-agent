@@ -55,6 +55,14 @@ def test_home_page_serves_research_form(client):
     assert "Kimi" not in response.text
 
 
+def test_home_page_contains_the_invite_access_gate(client):
+    response = client.get("/")
+    index_script = (main_module.STATIC_DIR / "index.js").read_text(encoding="utf-8")
+
+    assert 'id="access-gate"' in response.text
+    assert "/api/auth/invite" in index_script
+
+
 def test_run_and_report_pages_are_available(client):
     created = client.post(
         "/api/runs",

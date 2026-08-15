@@ -8,6 +8,19 @@
     <link rel="stylesheet" href="/static/styles.css">
   </head>
   <body class="app-page selection-page">
+    <section id="access-gate" class="access-gate" aria-labelledby="access-gate-title" hidden>
+      <form id="access-form" class="access-gate-card glass-surface">
+        <p class="access-gate-eyebrow">Xianyue Research Access</p>
+        <h1 id="access-gate-title">输入邀请码</h1>
+        <p>验证后即可进入研究工作台。更换邀请码会使现有登录自动失效。</p>
+        <label class="field field-emphasis">
+          <span>邀请码</span>
+          <input id="invite-code" name="invite_code" type="password" autocomplete="current-password" required>
+        </label>
+        <div id="access-error" class="notice notice-error" role="alert" hidden></div>
+        <button id="access-submit" class="button button-primary" type="submit"><span>进入工作台</span></button>
+      </form>
+    </section>
     <div class="ambient-field" aria-hidden="true"><span class="ambient-orb ambient-orb-primary"></span><span class="ambient-orb ambient-orb-secondary"></span><span class="ambient-grid"></span></div>
     <div id="cursor-spotlight" class="cursor-spotlight" aria-hidden="true"></div>
     <header class="app-header glass-surface">
