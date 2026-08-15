@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
 
 from app.fundamental.workflow import FundamentalWorkflow
+from app.fundamental.schemas import DeepResearchQuery, DeepResearchTaskCard
 from app.run_service import RunService
 from app.runtime.exceptions import AgentTimeoutError
 from app.runtime.pi_client import MockPiClient
@@ -88,6 +90,45 @@ def _workflow(settings, session_factory, interrupt_after=None):
         pi_client=MockPiClient(),
         interrupt_after=interrupt_after,
     )
+
+
+def test_deep_retrieval_runs_cards_in_parallel(settings, session_factory, monkeypatch) -> None:
+    _service_obj, run_id = _run(settings, session_factory)
+    workflow = _workflow(settings, session_factory)
+    calls: list[tuple[str, str]] = []
+
+    def execute(name, arguments, context, profile):
+        calls.append((name, arguments.get("task_card_id", "")))
+        time.sleep(0.03)
+        if name == "search_research_sources":
+            return {"items": [{"result_id": f"{arguments['task_card_id']}_src", "title": "t"}]}
+        return {"evidence_id": f"ev_{arguments['result_id']}"}
+
+    monkeypatch.setattr(workflow.tool_registry, "execute", execute)
+    cards = [
+        DeepResearchTaskCard(
+            task_id=f"deep_{index:02d}",
+            topic=f"专题{index}",
+            scope="scope",
+            research_questions=[f"问题{index}"],
+        )
+        for index in range(1, 4)
+    ]
+    queries = [
+        DeepResearchQuery(task_id=card.task_id, queries=[f"检索{card.task_id}"])
+        for card in cards
+    ]
+    started = time.monotonic()
+    audit = workflow._parallel_deep_retrieval(run_id, cards, queries, "parallel-test")
+    elapsed = time.monotonic() - started
+    workflow.shutdown()
+
+    assert elapsed < 0.16
+    assert all(audit[card.task_id]["search_count"] == 1 for card in cards)
+    assert all(audit[card.task_id]["read_count"] == 1 for card in cards)
+    assert {task_id for name, task_id in calls if name == "search_research_sources"} == {
+        card.task_id for card in cards
+    }
 
 
 class InvalidLeadEvidenceClient(MockPiClient):

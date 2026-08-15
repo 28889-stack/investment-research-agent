@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from app.fundamental.schemas import DeepResearchTaskCard, LeadReviewOutput
+from app.fundamental.schemas import (
+    DeepResearchQuery,
+    DeepResearchQueryPlan,
+    DeepResearchTaskCard,
+    LeadReviewOutput,
+)
 
 
 def build_deep_research_task_cards(review: LeadReviewOutput) -> list[DeepResearchTaskCard]:
@@ -25,3 +30,21 @@ def build_deep_research_task_cards(review: LeadReviewOutput) -> list[DeepResearc
             excluded_claims=review.conflicts,
         ))
     return cards
+
+
+def normalize_deep_query_plan(
+    plan: DeepResearchQueryPlan,
+    cards: list[DeepResearchTaskCard],
+    symbol: str,
+) -> list[DeepResearchQuery]:
+    """Fill missing planner entries without allowing a card to lose coverage."""
+    by_id = {item.task_id: item for item in plan.queries}
+    normalized: list[DeepResearchQuery] = []
+    for card in cards:
+        item = by_id.get(card.task_id)
+        queries = list(item.queries) if item else []
+        if not queries:
+            seed = card.research_questions[:2] or [card.topic]
+            queries = [f"{symbol} {card.topic} {question}" for question in seed]
+        normalized.append(DeepResearchQuery(task_id=card.task_id, queries=queries[:2]))
+    return normalized

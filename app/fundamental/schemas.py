@@ -257,6 +257,24 @@ class DeepResearchTaskCard(StrictModel):
     excluded_claims: list[str] = Field(default_factory=list)
 
 
+class DeepResearchQuery(StrictModel):
+    task_id: str = Field(pattern=r"^deep_\d{2}$")
+    queries: list[str] = Field(min_length=1, max_length=2)
+
+    @field_validator("queries")
+    @classmethod
+    def valid_queries(cls, values: list[str]) -> list[str]:
+        cleaned = list(dict.fromkeys(item.strip() for item in values if item.strip()))
+        if not cleaned or len(cleaned) > 2:
+            raise ValueError("每张 Deep 任务卡必须有 1—2 个非空检索词")
+        return cleaned
+
+
+class DeepResearchQueryPlan(StrictModel):
+    symbol: str
+    queries: list[DeepResearchQuery]
+
+
 class DeepResearchTopicResult(StrictModel):
     task_id: str = Field(pattern=r"^deep_\d{2}$")
     topic: str

@@ -51,8 +51,8 @@ def test_fundamental_profiles_have_least_privilege(settings) -> None:
     assert set(deep.allowed_tools) == set(industry.allowed_tools)
     assert deep.max_tool_calls == 25
     assert deep.timeout_seconds == 300
-    assert "工具阶段最多使用 180 秒" in deep.system_prompt
-    assert "当前 attempt" in deep.system_prompt
+    assert "按卡片并行搜索" in deep.system_prompt
+    assert "当前 Evidence" in deep.system_prompt
     # A full Deep pass may use every allowed tool call and still needs one
     # final model turn to emit its structured research brief.
     assert deep.max_iterations >= deep.max_tool_calls + 1
@@ -100,9 +100,9 @@ def test_deep_prompt_preserves_unique_round_results_until_attempt_ends(
 ) -> None:
     deep = ProfileLoader(settings.agent_profile_dir).load("deep_research").system_prompt
 
-    assert "当前 attempt 内已经返回的全部唯一" in deep
-    assert "达到两轮检索上限后停止继续搜索" in deep
-    assert "仍可读取" in deep
+    assert "系统已经按卡片并行搜索、读取并写入 Evidence" in deep
+    assert "并行搜索" in deep
+    assert "不得因为某一张卡没有新增资料而省略其他卡" in deep
     assert "最新一轮搜索中有效" not in deep
 
 

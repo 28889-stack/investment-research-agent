@@ -55,7 +55,7 @@ class Settings(BaseModel):
     kronos_device: str = "cpu"
     kronos_source_dir: Path = Path("./vendor/kronos")
     kronos_lookback: int = Field(default=400, ge=20, le=512)
-    kronos_prediction_length: int = Field(default=20, ge=1, le=120)
+    kronos_prediction_length: int = Field(default=10, ge=1, le=120)
     kronos_timeout_seconds: float = Field(default=300, gt=0)
     technical_research_profile: str = "technical_research"
     technical_assembly_profile: str = "technical_assembly"
@@ -166,7 +166,7 @@ class Settings(BaseModel):
             ),
             kronos_lookback=int(os.getenv("KRONOS_LOOKBACK", "400")),
             kronos_prediction_length=int(
-                os.getenv("KRONOS_PREDICTION_LENGTH", "20")
+                os.getenv("KRONOS_PREDICTION_LENGTH", "10")
             ),
             kronos_timeout_seconds=float(
                 os.getenv("KRONOS_TIMEOUT_SECONDS", "300")

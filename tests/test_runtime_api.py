@@ -10,7 +10,7 @@ def test_runtime_health_exposes_control_plane_only(client):
     assert response.json() == {
         "runtime_mode": "mock",
         "bridge_status": "ready",
-            "profiles_loaded": 16,
+        "profiles_loaded": 17,
         "tools_registered": 12,
         "checkpoint_status": "ready",
     }

@@ -295,7 +295,33 @@ export class Bridge {
         }],
       });
     }
+    if (session.profile.profile_id === "deep_research_planner") {
+      const review = artifacts.lead_review ?? {};
+      const cards = (review.deep_research_tasks ?? []) as Record<string, unknown>[];
+      return JSON.stringify({
+        symbol,
+        queries: cards.map((card) => ({
+          task_id: card.task_id,
+          queries: [`${symbol} ${String(card.topic ?? "专题")} ${String((card.research_questions as unknown[] | undefined)?.[0] ?? "最新进展")}`],
+        })),
+      });
+    }
     if (session.profile.profile_id === "deep_research") {
+      if (session.tools.length === 0) {
+        const review = artifacts.lead_review ?? {};
+        const cards = (review.deep_research_tasks ?? []) as Record<string, unknown>[];
+        const evidence = (artifacts.evidence?.items ?? []) as Record<string, unknown>[];
+        const evidenceIds = evidence.map((item) => String(item.id)).filter(Boolean);
+        const topics = cards.map((card) => ({
+          task_id: card.task_id,
+          topic: card.topic,
+          summary: evidenceIds.length ? "已基于并行检索得到的 Evidence 汇总专题结果。" : "并行检索未形成可引用的新增 Evidence。",
+          findings: evidenceIds.length ? [{ claim: "并行检索补充了该专题的可引用材料。", evidence_ids: evidenceIds.slice(0, 1), confidence: "low" }] : [],
+          risks: [],
+          missing_information: evidenceIds.length ? [] : (card.research_questions ?? []),
+        }));
+        return JSON.stringify({ symbol, summary: "已完成各专题并行检索结果汇总。", findings: [], risks: [], missing_information: [], topics });
+      }
       const review = artifacts.lead_review ?? {};
       const cards = (review.deep_research_tasks ?? []) as Record<string, unknown>[];
       const card = cards[0] ?? { task_id: "deep_01", topic: "补充 Lead Review 缺失数据" };

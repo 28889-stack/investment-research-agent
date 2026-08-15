@@ -239,7 +239,26 @@ class MockPiClient:
             artifacts = context["artifacts"]
             missing = list(artifacts["business_research"]["missing_information"]) + list(artifacts["industry_research"]["missing_information"])
             return json.dumps({"symbol": symbol, "business_status": "accepted", "industry_status": "accepted_with_gaps" if missing else "accepted", "key_findings": ["品牌渠道优势与行业周期风险并存"], "conflicts": ["业务稳定性与行业周期波动需继续验证"], "financial_questions": ["自由现金流能否支持长期估值"], "missing_information": missing, "followup_research_tasks": ["补充核验自由现金流与资本开支的关系"], "deep_research_tasks": [{"task_id": "deep_01", "topic": "自由现金流与资本开支", "scope": "核验现金流质量及其对估值假设的影响", "research_questions": ["自由现金流能否覆盖资本开支并支持长期估值"], "priority_fact_types": ["historical_fact"], "known_material": ["品牌渠道优势与行业周期风险并存"], "excluded_claims": ["业务稳定性与行业周期波动需继续验证"]}]}, ensure_ascii=False)
+        if profile["profile_id"] == "deep_research_planner":
+            cards = context.get("artifacts", {}).get("lead_review", {}).get("deep_research_tasks", [])
+            return json.dumps({
+                "symbol": symbol,
+                "queries": [{
+                    "task_id": card["task_id"],
+                    "queries": [f"{symbol} {card.get('topic', '专题')} {card.get('research_questions', ['最新进展'])[0]}"],
+                } for card in cards],
+            }, ensure_ascii=False)
         if profile["profile_id"] == "deep_research":
+            if not session["tools"]:
+                cards = context.get("artifacts", {}).get("lead_review", {}).get("deep_research_tasks", [])
+                evidence_ids = [item.get("id") for item in context.get("artifacts", {}).get("evidence", {}).get("items", []) if item.get("id")]
+                topics = [{
+                    "task_id": card["task_id"], "topic": card["topic"],
+                    "summary": "已基于并行检索得到的 Evidence 汇总专题结果。" if evidence_ids else "并行检索未形成可引用的新增 Evidence。",
+                    "findings": [{"claim": "并行检索补充了该专题的可引用材料。", "evidence_ids": evidence_ids[:1], "confidence": "low"}] if evidence_ids else [],
+                    "risks": [], "missing_information": [] if evidence_ids else card.get("research_questions", []),
+                } for card in cards]
+                return json.dumps({"symbol": symbol, "summary": "已完成各专题并行检索结果汇总。", "findings": [], "risks": [], "missing_information": [], "topics": topics}, ensure_ascii=False)
             artifacts = context["artifacts"]
             missing = list(artifacts["lead_review"]["missing_information"])
             cards = artifacts["lead_review"].get("deep_research_tasks", [])

@@ -17,7 +17,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
 from app.fundamental.data import get_financial_data, get_market_snapshot
-from app.fundamental.deep_research import build_deep_research_task_cards
+from app.fundamental.deep_research import (
+    build_deep_research_task_cards,
+    normalize_deep_query_plan,
+)
 from app.fundamental.financials import calculate_financial_metrics
 from app.fundamental.research_package import generate_research_package, research_package_is_current
 from app.fundamental.section_writer import (
@@ -49,6 +52,8 @@ from app.fundamental.schemas import (
     LeadSynthesisOutput,
     LeadPlanOutput,
     LeadReviewOutput,
+    DeepResearchQuery,
+    DeepResearchQueryPlan,
     SpecialistResearchOutput,
     RetrievalPackage,
     RetrievalPackageItem,
@@ -74,6 +79,7 @@ from app.runtime.pi_client import BridgePiClient, PiClient
 from app.runtime.profiles import ProfileLoader
 from app.runtime.repository import RuntimeRepository
 from app.runtime.tool_registry import ToolRegistry
+from app.runtime.schemas import ToolExecutionContext
 from app.technical.market_data import resolve_security
 from app.tools.fundamental_tools import build_fundamental_tools
 
@@ -370,6 +376,90 @@ class FundamentalWorkflow:
             required_tools=set(), disable_profile_tools=True,
         )
 
+    def _parallel_deep_retrieval(
+        self,
+        run_id: str,
+        cards,
+        query_plan: list[DeepResearchQuery],
+        execution_id: str,
+    ) -> dict[str, dict[str, Any]]:
+        """Search and read each Deep card independently in bounded parallel lanes."""
+        profile = self.profile_loader.load(self.settings.deep_research_profile)
+        queries_by_id = {item.task_id: item.queries for item in query_plan}
+        context = ToolExecutionContext(
+            run_id=run_id,
+            agent_execution_id=execution_id,
+            profile_id=profile.profile_id,
+            profile_mode=profile.mode,
+            parallel_retrieval=True,
+        )
+
+        search_jobs = [
+            (card, query)
+            for card in cards
+            for query in queries_by_id.get(card.task_id, [card.topic])[:2]
+        ]
+
+        def search_one(job):
+            card, query = job
+            try:
+                result = self.tool_registry.execute(
+                    "search_research_sources",
+                    {"query": query, "task_card_id": card.task_id},
+                    context,
+                    profile,
+                )
+                return card.task_id, query, result, None
+            except Exception as exc:
+                return card.task_id, query, {"items": []}, str(exc)[:300]
+
+        search_results: list[tuple[str, str, dict[str, Any], str | None]] = []
+        with ThreadPoolExecutor(max_workers=min(6, max(1, len(search_jobs)))) as pool:
+            search_results = list(pool.map(search_one, search_jobs))
+
+        reads: list[tuple[str, str, dict[str, Any]]] = []
+        for task_id, query, result, _error in search_results:
+            for item in result.get("items", [])[:2]:
+                reads.append((task_id, query, item))
+
+        def read_one(item):
+            task_id, query, source = item
+            try:
+                result = self.tool_registry.execute(
+                    "read_research_source",
+                    {
+                        "result_id": source["result_id"],
+                        "claim": f"{task_id}：{query}",
+                        "evidence_type": "historical_fact",
+                    },
+                    context,
+                    profile,
+                )
+                return task_id, result, None
+            except Exception as exc:
+                return task_id, {}, str(exc)[:300]
+
+        read_results: list[tuple[str, dict[str, Any], str | None]] = []
+        with ThreadPoolExecutor(max_workers=min(6, max(1, len(reads)))) as pool:
+            read_results = list(pool.map(read_one, reads))
+
+        audit = {
+            card.task_id: {
+                "queries": queries_by_id.get(card.task_id, [card.topic])[:2],
+                "search_count": sum(1 for task_id, *_ in search_results if task_id == card.task_id),
+                "read_count": sum(1 for task_id, *_ in read_results if task_id == card.task_id),
+                "errors": [
+                    error for task_id, _query, _result, error in search_results
+                    if task_id == card.task_id and error
+                ] + [
+                    error for task_id, _result, error in read_results
+                    if task_id == card.task_id and error
+                ],
+            }
+            for card in cards
+        }
+        return audit
+
     def _deep_research(self, state: FundamentalGraphState) -> FundamentalGraphState:
         node = "deep_research"
         if self._cancelled(state["run_id"], node):
@@ -386,17 +476,72 @@ class FundamentalWorkflow:
                 {"symbol": run.resolved_symbol, "tasks": [card.model_dump(mode="json") for card in cards]},
                 directory / "deep_research_tasks.json",
             )
+            # Test clients intentionally model the legacy interactive tool loop.
+            # The deployed Bridge path below uses the production parallel lanes;
+            # retaining this adapter path keeps deterministic workflow fixtures
+            # focused on schema/recovery behavior.
+            if not self._owns_client:
+                result = self._run_agent(
+                    run.run_id,
+                    node,
+                    self.profile_loader.load(self.settings.deep_research_profile),
+                    "specialist_research_output",
+                    "按 Lead Review 的 deep_research_tasks 逐张执行专题补充检索。每张卡最多进行两轮专题搜索；存在准备引用且可读取的新来源时再读取正文，并可按已读材料改写下一轮检索。全节点总工具预算不超过 25 次；资料已足够时立即停止。每个 topics 条目必须对应 task_id；没有可靠增量或来源不可读时写明未解决及原因，不得把既有结论换句话重复，也不得因没有读取来源而拒绝输出。只围绕卡片检索，不重复首轮泛化研究。",
+                    ["artifact:lead_plan", "artifact:business_research", "artifact:industry_research", "artifact:lead_review"],
+                )
+                output = SpecialistResearchOutput.model_validate(result.output)
+                completed_tools = self._completed_node_tool_names(run.run_id, node)
+                if cards and "search_research_sources" not in completed_tools:
+                    raise ValueError("deep_research 必须至少执行专题搜索")
+                expected_task_ids = {card.task_id for card in cards}
+                actual_task_ids = {topic.task_id for topic in output.topics}
+                if actual_task_ids - expected_task_ids:
+                    raise ValueError("deep_research topics 包含未知任务卡")
+                if cards and actual_task_ids != expected_task_ids:
+                    raise ValueError("deep_research 未返回全部专题任务卡结果")
+                self._identity(output, run)
+                validate_references(output, self._evidence(directory), self._assumptions(directory))
+                _atomic_model(output, directory / "deep_research.json")
+                self._record_node_results(run.run_id, node)
+                return self._paths(run.run_id, node, error_message=None)
+            planner_profile = self.profile_loader.load("deep_research_planner")
+            planner = self._run_agent(
+                run.run_id,
+                "deep_research_planning",
+                planner_profile,
+                "deep_research_query_plan",
+                "为 Lead Review 的每张专题任务卡生成 1—2 个高区分度检索词，必须覆盖全部 task_id。",
+                ["artifact:lead_plan", "artifact:lead_review"],
+            )
+            query_plan = DeepResearchQueryPlan.model_validate(planner.output)
+            normalized_queries = normalize_deep_query_plan(
+                query_plan, cards, run.resolved_symbol or ""
+            )
+            retrieval_audit = self._parallel_deep_retrieval(
+                run.run_id, cards, normalized_queries, planner.execution_id
+            )
+            _atomic_json(
+                {
+                    "symbol": run.resolved_symbol,
+                    "tasks": [card.model_dump(mode="json") for card in cards],
+                    "query_plan": [item.model_dump(mode="json") for item in normalized_queries],
+                    "retrieval_audit": retrieval_audit,
+                },
+                directory / "deep_research_tasks.json",
+            )
+            final_profile = self.profile_loader.load(self.settings.deep_research_profile).model_copy(
+                update={"allowed_tools": [], "max_tool_calls": 0, "max_iterations": 1}
+            )
             result = self._run_agent(
                 run.run_id,
                 node,
-                self.profile_loader.load(self.settings.deep_research_profile),
+                final_profile,
                 "specialist_research_output",
-                "按 Lead Review 的 deep_research_tasks 逐张执行专题补充检索。每张卡最多进行两轮专题搜索；存在准备引用且可读取的新来源时再读取正文，并可按已读材料改写下一轮检索。全节点总工具预算不超过 25 次；资料已足够时立即停止。每个 topics 条目必须对应 task_id；没有可靠增量或来源不可读时写明未解决及原因，不得把既有结论换句话重复，也不得因没有读取来源而拒绝输出。只围绕卡片检索，不重复首轮泛化研究。",
-                ["artifact:lead_plan", "artifact:business_research", "artifact:industry_research", "artifact:lead_review"],
+                "检索规划器已经为每张任务卡生成检索词，检索和来源读取也已按任务卡并行完成。现在只基于 Lead Review、首轮研究和当前 Evidence 汇总最终专题简报。不得调用工具，不得重新检索。必须覆盖全部 task_id；每张卡分别总结新增 Evidence 支持的结论，没有可靠增量就写入 missing_information，不得重复已有结论。",
+                ["artifact:lead_plan", "artifact:business_research", "artifact:industry_research", "artifact:lead_review", "artifact:evidence"],
             )
             output = SpecialistResearchOutput.model_validate(result.output)
-            completed_tools = self._completed_node_tool_names(run.run_id, node)
-            if cards and "search_research_sources" not in completed_tools:
+            if cards and not any(item["search_count"] for item in retrieval_audit.values()):
                 raise ValueError("deep_research 必须至少执行专题搜索")
             expected_task_ids = {card.task_id for card in cards}
             actual_task_ids = {topic.task_id for topic in output.topics}

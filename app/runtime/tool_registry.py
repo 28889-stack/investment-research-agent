@@ -193,8 +193,15 @@ class ToolRegistry:
 
 def _run_with_deadline(handler, arguments, context, *, timeout_seconds: float):
     """Use the Worker thread so timeout cannot leave a late-writing thread."""
-    if threading.current_thread() is not threading.main_thread() or not hasattr(signal, "SIGALRM"):
-        raise RuntimeError("工具必须在支持 SIGALRM 的 Worker 主线程执行")
+    # Parallel Deep retrieval executes bounded provider/read lanes from worker
+    # threads. POSIX interval timers are process-wide and can only be installed
+    # safely by the main thread, so those lanes rely on each HTTP adapter's
+    # explicit client timeout. Interactive Agent tool calls still use SIGALRM
+    # below for the normal per-tool deadline.
+    if threading.current_thread() is not threading.main_thread():
+        return handler(arguments, context)
+    if not hasattr(signal, "SIGALRM"):
+        return handler(arguments, context)
 
     def timeout_handler(_signum, _frame):
         raise ToolTimeoutError("工具执行超时")

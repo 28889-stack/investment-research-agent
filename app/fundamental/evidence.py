@@ -4,6 +4,7 @@ import ipaddress
 import json
 import os
 import socket
+import threading
 import time
 from html.parser import HTMLParser
 from pathlib import Path
@@ -20,8 +21,16 @@ from app.fundamental.schemas import (
 
 
 class EvidenceStore:
+    _locks: dict[str, threading.RLock] = {}
+    _locks_guard = threading.Lock()
+
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
+
+    def _lock(self) -> threading.RLock:
+        key = str(self.path.resolve())
+        with self._locks_guard:
+            return self._locks.setdefault(key, threading.RLock())
 
     def load(self) -> EvidenceCollection:
         if not self.path.is_file():
@@ -39,30 +48,31 @@ class EvidenceStore:
         location: str,
         evidence_type: str,
     ) -> EvidenceItem:
-        collection = self.load()
-        # A document may be useful to more than one research role.  Keep the
-        # Evidence object canonical for an identical URL/body pair instead of
-        # appending a second copy with a paraphrased claim.
-        for existing in collection.items:
-            if existing.url == url and existing.content == content:
-                return existing
-        used = {int(item.id.partition("_")[2]) for item in collection.items}
-        number = 1
-        while number in used:
-            number += 1
-        item = EvidenceItem(
-            id=f"ev_{number:03d}",
-            claim=claim,
-            content=content,
-            source_name=source_name,
-            url=url,
-            date=date_value,
-            location=location,
-            type=evidence_type,
-        )
-        collection.items.append(item)
-        self._write(collection)
-        return item
+        with self._lock():
+            collection = self.load()
+            # A document may be useful to more than one research role.  Keep the
+            # Evidence object canonical for an identical URL/body pair instead of
+            # appending a second copy with a paraphrased claim.
+            for existing in collection.items:
+                if existing.url == url and existing.content == content:
+                    return existing
+            used = {int(item.id.partition("_")[2]) for item in collection.items}
+            number = 1
+            while number in used:
+                number += 1
+            item = EvidenceItem(
+                id=f"ev_{number:03d}",
+                claim=claim,
+                content=content,
+                source_name=source_name,
+                url=url,
+                date=date_value,
+                location=location,
+                type=evidence_type,
+            )
+            collection.items.append(item)
+            self._write(collection)
+            return item
 
     def find_by_url(self, url: str) -> EvidenceItem | None:
         canonical = canonical_source_url(url)

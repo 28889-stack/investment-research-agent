@@ -259,13 +259,13 @@ def build_fundamental_tools(
             )
             state.setdefault("unresolved", set())
             active = state["active"]
-            if args.task_card_id != active:
+            if args.task_card_id != active and not context.parallel_retrieval:
                 if active is not None and active not in state["reads"]:
                     state["unresolved"].add(active)
             searches = state["searches"]
             count = int(searches.get(args.task_card_id, 0))
             tool_phase_started_at = float(state["tool_phase_started_at"])
-            if _monotonic() - tool_phase_started_at >= _DEEP_TOOL_PHASE_SECONDS:
+            if not context.parallel_retrieval and _monotonic() - tool_phase_started_at >= _DEEP_TOOL_PHASE_SECONDS:
                 state["active"] = args.task_card_id
                 state["unresolved"].add(args.task_card_id)
                 return ResearchSearchResults(items=[], retrieval_notice=(
@@ -375,13 +375,13 @@ def build_fundamental_tools(
         if context.profile_id == "deep_research":
             state = deep_task_state.get(deep_execution_key(context), {})
             active = state.get("active")
-            if not active:
+            if not active and not context.parallel_retrieval:
                 raise ResearchSourceError(
                     "RESEARCH_SOURCE_FAILED: Deep 尚未在当前 attempt 开始专题检索；"
                     "仅能读取当前 attempt 最新一轮搜索结果"
                 )
             tool_phase_started_at = float(state["tool_phase_started_at"])
-            if _monotonic() - tool_phase_started_at >= _DEEP_TOOL_PHASE_SECONDS:
+            if not context.parallel_retrieval and _monotonic() - tool_phase_started_at >= _DEEP_TOOL_PHASE_SECONDS:
                 state["unresolved"].add(active)
                 return ReadSourceOutput(
                     retrieval_notice=(

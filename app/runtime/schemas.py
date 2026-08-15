@@ -12,6 +12,7 @@ from app.fundamental.schemas import (
     LeadFinalReviewOutput,
     LeadPlanOutput,
     LeadReviewOutput,
+    DeepResearchQueryPlan,
     SpecialistResearchOutput,
     ValuationResearchOutput,
     WriterPlanOutput,
@@ -52,6 +53,7 @@ class AgentProfile(BaseModel):
         "writer_plan_output",
         "writer_section_output",
         "evidence_chart_extraction_output",
+        "deep_research_query_plan",
     ]
     model: str | None = None
     timeout_seconds: float = Field(gt=0, le=300)
@@ -116,6 +118,7 @@ class AgentExecutionResult(BaseModel):
         | LeadPlanOutput
         | SpecialistResearchOutput
         | LeadReviewOutput
+        | DeepResearchQueryPlan
         | FinancialResearchDraft
         | ValuationResearchOutput
         | LeadFinalReviewOutput
@@ -134,3 +137,4 @@ class ToolExecutionContext(BaseModel):
     agent_execution_id: str
     profile_id: str
     profile_mode: Literal["full", "constrained"]
+    parallel_retrieval: bool = False
