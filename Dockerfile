@@ -19,7 +19,9 @@ RUN apt-get update \
     && groupadd --gid 10001 appuser \
     && useradd --uid 10001 --gid appuser --create-home appuser
 COPY requirements.txt requirements-kronos.txt ./
-RUN pip install --no-cache-dir -r requirements.txt -r requirements-kronos.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu "torch>=2.7,<3" \
+    && pip install --no-cache-dir -r requirements-kronos.txt
 COPY config/kronos-source.json ./config/kronos-source.json
 RUN mkdir -p /app/vendor \
     && git clone --filter=blob:none https://github.com/shiyu-coder/Kronos.git /app/vendor/kronos \

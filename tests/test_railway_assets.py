@@ -8,6 +8,7 @@ def test_docker_image_runs_the_single_service_and_includes_live_kronos_runtime()
     dockerfile = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
 
     assert "requirements-kronos.txt" in dockerfile
+    assert "download.pytorch.org/whl/cpu" in dockerfile
     assert "config/kronos-source.json" in dockerfile
     assert 'CMD ["python", "-m", "app.service"]' in dockerfile
     assert "HF_HOME=/app/data/huggingface" in dockerfile
