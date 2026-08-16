@@ -223,7 +223,7 @@ def _predict_live(
             pred_len=settings.kronos_prediction_length,
             T=1.0,
             top_p=0.9,
-            sample_count=5,
+            sample_count=settings.kronos_sample_count,
         )
         predicted_close = pd.to_numeric(forecast["close"], errors="raise")
     except Exception as exc:

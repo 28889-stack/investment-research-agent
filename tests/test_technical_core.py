@@ -14,6 +14,7 @@ from app.technical.indicators import calculate_indicators
 from app.technical.kronos import (
     KronosError,
     _kronos_runtime_spec,
+    _predict_live,
     predict_kronos,
     validate_kronos_result,
 )
@@ -528,3 +529,22 @@ def test_kronos_mini_uses_2k_tokenizer_and_full_context(settings: Settings) -> N
     assert spec.tokenizer_name == "NeoQuasar/Kronos-Tokenizer-2k"
     assert spec.max_context == 2048
     assert spec.device == "mps"
+
+
+def test_kronos_live_uses_cpu_friendly_history_and_single_sample(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    frame = get_market_data("600519.SH", AS_OF, settings)
+    calls: dict[str, object] = {}
+
+    class FakePredictor:
+        def predict(self, **kwargs):
+            calls.update(kwargs)
+            return pd.DataFrame({"close": [100.0] * settings.kronos_prediction_length})
+
+    monkeypatch.setattr("app.technical.kronos._get_live_predictor", lambda _settings: FakePredictor())
+    _predict_live(frame, "600519.SH", AS_OF, "version", settings)
+
+    assert settings.kronos_lookback == 240
+    assert len(calls["df"]) == 240
+    assert calls["sample_count"] == 1
