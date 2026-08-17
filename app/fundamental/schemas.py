@@ -424,6 +424,7 @@ class ReportCompositionSection(StrictModel):
     allowed_assumption_ids: list[str] = Field(default_factory=list)
     visual_components: list[Literal["chart", "table", "timeline", "callout"]] = Field(default_factory=list)
     writer_group: Literal["business", "industry", "financial"] | None = None
+    deep_task_ids: list[str] = Field(default_factory=list)
 
 
 class PlannedVisual(StrictModel):

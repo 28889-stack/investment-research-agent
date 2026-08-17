@@ -10,7 +10,7 @@ def test_settings_expose_mvp_operations_defaults() -> None:
     assert settings.app_env == "development"
     assert settings.allow_public_bind is False
     assert settings.max_pending_runs == 20
-    assert settings.max_agent_context_chars == 50_000
+    assert settings.max_agent_context_chars == 80_000
     assert settings.research_search_max_results == 8
     assert settings.findkg_data_dir.as_posix() == "data/findkg/FinDKG"
     assert settings.logs_dir.as_posix() == "logs"

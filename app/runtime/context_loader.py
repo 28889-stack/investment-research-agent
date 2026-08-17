@@ -64,6 +64,42 @@ def _compact_writer_artifacts(artifacts: dict[str, Any]) -> None:
         lead_synthesis.pop("conflicts", None)
 
 
+def _compact_deep_research_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    """Expose only the routing-level Deep brief to Writer Planning.
+
+    The full Deep artifact remains available to Section Writers. Planning only
+    needs enough information to map a topic to one or more writer groups; source
+    excerpts and raw retrieval detail must not be injected into that context.
+    """
+    topics: list[dict[str, Any]] = []
+    for topic in payload.get("topics", []):
+        if not isinstance(topic, dict):
+            continue
+        topics.append(
+            {
+                "task_id": topic.get("task_id", ""),
+                "topic": topic.get("topic", ""),
+                "summary": topic.get("summary", ""),
+                "finding_summaries": [
+                    {
+                        "claim": finding.get("claim", ""),
+                        "evidence_ids": finding.get("evidence_ids", []),
+                        "confidence": finding.get("confidence", "medium"),
+                    }
+                    for finding in topic.get("findings", [])
+                    if isinstance(finding, dict)
+                ],
+                "risks": topic.get("risks", []),
+                "missing_information": topic.get("missing_information", []),
+            }
+        )
+    return {
+        "symbol": payload.get("symbol", ""),
+        "summary": payload.get("summary", ""),
+        "topics": topics,
+    }
+
+
 class ContextLoader:
     def __init__(
         self,
@@ -275,11 +311,14 @@ class ContextLoader:
         }
         if set(context_refs) != required or len(context_refs) != len(required):
             raise ValueError("Writer Plan Artifact 引用不在专用白名单")
+        artifacts = self._load_fundamental_artifacts(run, context_refs)
+        deep_research = artifacts.pop("deep_research")
+        artifacts["deep_research_summary"] = _compact_deep_research_summary(deep_research)
         return {
             "run": {"run_id": run.run_id, "resolved_symbol": run.resolved_symbol, "security_name": run.security_name, "as_of": run.as_of},
             "node": node_name,
             "task": task,
-            "artifacts": self._load_fundamental_artifacts(run, context_refs),
+            "artifacts": artifacts,
             "output_schema": output_model_for_schema("writer_plan_output").model_json_schema(),
         }
 
@@ -457,19 +496,18 @@ class ContextLoader:
                 for chart in visuals.charts
                 if chart.status == "generated" and chart.section_id in section_ids
             ]
+        scoped["research_briefs"] = {"deep": artifacts["deep_research"]}
         if group == "business":
-            scoped["research_briefs"] = {"business": artifacts["business_research"]}
+            scoped["research_briefs"]["business"] = artifacts["business_research"]
         elif group == "industry":
-            scoped["research_briefs"] = {
-                "industry": artifacts["industry_research"], "deep": artifacts["deep_research"]
-            }
+            scoped["research_briefs"]["industry"] = artifacts["industry_research"]
         else:
-            metrics = artifacts["financial_metrics"]
-            latest = metrics["periods"][-1] if metrics["periods"] else None
-            scoped["research_briefs"] = {
+            scoped["research_briefs"].update({
                 "financial": artifacts["financial_research"],
                 "valuation": artifacts["valuation_research"],
-            }
+            })
+            metrics = artifacts["financial_metrics"]
+            latest = metrics["periods"][-1] if metrics["periods"] else None
             scoped["financial_metrics_summary"] = {
                 "latest_period": latest,
                 "latest": {

@@ -772,7 +772,7 @@ class FundamentalWorkflow:
             schema_name="writer_plan_output",
             model=WriterPlanOutput,
             filename="writer_plan.json",
-            task="根据 Lead 已批准的主线形成独立 Writer Plan：产出 3—6 个专题的 report_composition，安排叙事目标、顺序、允许引用/假设和图表强调意图。visual_plan 可以为空，不设数量硬指标；只有存在时间变化、横向对比、情景对照或结构变化时才规划图表。每张图必须声明 comparison_mode 与 comparison_basis，并至少具备两个单位、时间和指标含义可比的数据点；单个数字、单一期数据及 PE、PB、PS、DCF 混合估值快照不画图。只声明插件、数据来源模式、指标键、授权引用、图形和位置，不得填写 labels、series 或图表数值。可用插件仅限 financial_performance_trend、profitability_quality、cashflow_capex、balance_sheet_health、business_mix、production_capacity、industry_supply_demand、commodity_price_cycle、project_timeline；资格校验失败的图表应静默跳过，不应中断报告。不要把 Lead 的四类研究镜头直接变成四个固定章节；资料待补充事项仅进入独立的‘优化建议’板块，不得中断正文。",
+            task="根据 Lead 已批准的主线形成独立 Writer Plan：产出 3—6 个专题的 report_composition，安排叙事目标、顺序、允许引用/假设和图表强调意图。你只读取 deep_research_summary，不读取 Deep 原始专题全文；请根据摘要中的 task_id、主题和结论，为每个专题填写 deep_task_ids，将同一跨领域任务卡分配给所有需要它的 writer_group，不要为了避免重合而漏分配。visual_plan 可以为空，不设数量硬指标；只有存在时间变化、横向对比、情景对照或结构变化时才规划图表。每张图必须声明 comparison_mode 与 comparison_basis，并至少具备两个单位、时间和指标含义可比的数据点；单个数字、单一期数据及 PE、PB、PS、DCF 混合估值快照不画图。只声明插件、数据来源模式、指标键、授权引用、图形和位置，不得填写 labels、series 或图表数值。可用插件仅限 financial_performance_trend、profitability_quality、cashflow_capex、balance_sheet_health、business_mix、production_capacity、industry_supply_demand、commodity_price_cycle、project_timeline；资格校验失败的图表应静默跳过，不应中断报告。不要把 Lead 的四类研究镜头直接变成四个固定章节；资料待补充事项仅进入独立的‘优化建议’板块，不得中断正文。",
             context_refs=["artifact:lead_synthesis", "artifact:lead_final_review", "artifact:business_research", "artifact:industry_research", "artifact:deep_research", "artifact:financial_research", "artifact:valuation_research", "artifact:financial_metrics", "artifact:valuation_result"],
             required_tools=set(),
         )
@@ -920,7 +920,7 @@ class FundamentalWorkflow:
                     try:
                         return adapter.run(
                             run.run_id, f"writer_section_{group}", profile,
-                            f"只写 section_group={group} 的 writer_assignment；逐项输出连续论证，不得覆盖其他组。上下文中的 visuals 是已核验、只读的图表规格：在对应专题正文中解释图表所服务的论点和观察含义，不得改数、重算或为跳过的图表补数。",
+                            f"只写 section_group={group} 的 writer_assignment；逐项输出连续论证，不得覆盖其他组。完整 Deep 研究在 research_briefs.deep 中可用，但必须优先依据 writer_assignment.deep_task_ids 选择与当前组职责相关的专题；跨领域任务卡只写其中与本组相关的经营、行业或财务含义，不要机械重复其他 Writer 的论证。上下文中的 visuals 是已核验、只读的图表规格：在对应专题正文中解释图表所服务的论点和观察含义，不得改数、重算或为跳过的图表补数。",
                             SECTION_WRITER_CONTEXT_REFS,
                             attempt=self._next_attempt(run.run_id, f"writer_section_{group}"),
                             output_schema_name="writer_section_output",

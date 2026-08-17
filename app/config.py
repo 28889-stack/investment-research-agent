@@ -38,7 +38,7 @@ class Settings(BaseModel):
     pi_model: str = ""
     pi_api_key_env_name: str = ""
     agent_profile_dir: Path = Path("./app/profiles")
-    max_agent_context_chars: int = Field(default=50_000, gt=0)
+    max_agent_context_chars: int = Field(default=80_000, gt=0)
     max_agent_output_chars: int = Field(default=20_000, gt=0)
     max_tool_calls_per_node: int = Field(default=25, ge=0)
     tool_default_timeout: float = Field(default=30.0, gt=0)
@@ -140,7 +140,7 @@ class Settings(BaseModel):
                 os.getenv("AGENT_PROFILE_DIR", "./app/profiles")
             ),
             max_agent_context_chars=int(
-                os.getenv("MAX_AGENT_CONTEXT_CHARS", "50000")
+                os.getenv("MAX_AGENT_CONTEXT_CHARS", "80000")
             ),
             max_agent_output_chars=int(
                 os.getenv("MAX_AGENT_OUTPUT_CHARS", "20000")

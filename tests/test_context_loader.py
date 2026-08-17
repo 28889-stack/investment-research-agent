@@ -276,6 +276,73 @@ def test_writer_context_keeps_deep_detail_but_removes_redundant_specialist_topic
     assert "conflicts" not in artifacts["lead_synthesis"]
 
 
+def test_writer_planning_receives_only_a_compact_deep_summary(
+    settings, session_factory
+):
+    from app.fundamental.workflow import FundamentalWorkflow
+    from app.runtime.pi_client import MockPiClient
+
+    service = RunService(session_factory, settings.artifacts_dir)
+    run = service.create_run(symbol="贵州茅台", analysis_type="fundamental", as_of="2026-08-05")
+    workflow = FundamentalWorkflow(settings, session_factory, pi_client=MockPiClient())
+    try:
+        workflow.run(run.run_id)
+    finally:
+        workflow.shutdown()
+
+    profile = ProfileLoader(settings.agent_profile_dir).load("writer_planning")
+    loader = ContextLoader(service, RuntimeRepository(session_factory), max_context_chars=30_000)
+    context = loader.load_for_agent(
+        run.run_id,
+        profile,
+        "writer_planning",
+        [
+            "artifact:lead_synthesis", "artifact:lead_final_review", "artifact:business_research",
+            "artifact:industry_research", "artifact:deep_research", "artifact:financial_research",
+            "artifact:valuation_research", "artifact:financial_metrics", "artifact:valuation_result",
+        ],
+        "根据主线和 Deep 专题摘要分配 Writer 任务",
+        output_schema_name="writer_plan_output",
+    )
+
+    artifacts = context["artifacts"]
+    assert "deep_research" not in artifacts
+    summary = artifacts["deep_research_summary"]
+    assert summary["topics"]
+    assert all(set(topic) >= {"task_id", "topic", "summary"} for topic in summary["topics"])
+    assert all("excerpt" not in topic for topic in summary["topics"])
+
+
+def test_all_section_writers_receive_deep_research_for_role_scoping(
+    settings, session_factory
+):
+    from app.fundamental.workflow import FundamentalWorkflow
+    from app.runtime.pi_client import MockPiClient
+
+    service = RunService(session_factory, settings.artifacts_dir)
+    run = service.create_run(symbol="贵州茅台", analysis_type="fundamental", as_of="2026-08-05")
+    workflow = FundamentalWorkflow(settings, session_factory, pi_client=MockPiClient())
+    try:
+        workflow.run(run.run_id)
+    finally:
+        workflow.shutdown()
+
+    loader = ContextLoader(service, RuntimeRepository(session_factory), max_context_chars=50_000)
+    refs = [
+        "artifact:lead_synthesis", "artifact:writer_plan", "artifact:business_research",
+        "artifact:industry_research", "artifact:deep_research", "artifact:financial_research",
+        "artifact:valuation_research", "artifact:retrieval_package", "artifact:assumptions",
+        "artifact:financial_metrics", "artifact:valuation_result",
+    ]
+    profile = ProfileLoader(settings.agent_profile_dir).load("writer_section")
+    for group in ("business", "industry", "financial"):
+        context = loader.load_for_agent(
+            run.run_id, profile, f"writer_section_{group}", refs,
+            f"只写 {group} 章节", output_schema_name="writer_section_output",
+        )
+        assert context["artifacts"]["research_briefs"]["deep"]["topics"]
+
+
 def test_lead_synthesis_context_uses_citation_index_without_dropping_deep_topics(
     settings, session_factory
 ):

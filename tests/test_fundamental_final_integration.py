@@ -158,11 +158,12 @@ def test_writer_execution_has_independent_session_and_scoped_safe_context(settin
         assert "retrieval_package" not in artifacts
         assigned_ids.extend(item["section_id"] for item in artifacts["writer_assignment"])
         if group == "business":
-            assert set(artifacts["research_briefs"]) == {"business"}
+            assert set(artifacts["research_briefs"]) == {"business", "deep"}
         elif group == "industry":
             assert set(artifacts["research_briefs"]) == {"industry", "deep"}
         else:
-            assert set(artifacts["research_briefs"]) == {"financial", "valuation"}
+            assert set(artifacts["research_briefs"]) == {"financial", "valuation", "deep"}
+        if group == "financial":
             assert "periods" not in artifacts["financial_metrics_summary"]
             assert "market_snapshot" not in artifacts["valuation_result_summary"]
     assert len(assigned_ids) == len(set(assigned_ids))

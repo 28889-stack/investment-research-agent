@@ -117,6 +117,17 @@ def test_writer_planning_only_plans_comparable_charts(settings) -> None:
     assert "不应中断报告" in prompt
 
 
+def test_writer_prompts_route_deep_topics_by_task_id(settings) -> None:
+    profiles = ProfileLoader(settings.agent_profile_dir)
+    planning = profiles.load("writer_planning").system_prompt
+    section = profiles.load("writer_section").system_prompt
+
+    assert "deep_research_summary" in planning
+    assert "deep_task_ids" in planning
+    assert "跨领域" in section
+    assert "deep_task_ids" in section
+
+
 def test_fundamental_output_schemas_are_strict_and_registered() -> None:
     validator = OutputValidator(20_000)
     lead = {
