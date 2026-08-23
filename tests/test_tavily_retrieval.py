@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+from typing import get_type_hints
+
 import httpx
 import pytest
 
 from app.fundamental.evidence import ResearchSourceError
 from app.retrieval.tavily import TavilySearchProvider
+
+
+def test_tavily_api_key_environment_name_is_optional_string() -> None:
+    hints = get_type_hints(TavilySearchProvider.__init__)
+
+    assert hints["api_key_env_name"] == str | None
 
 
 class _FakeResponse:
