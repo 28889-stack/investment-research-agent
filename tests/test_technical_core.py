@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 from importlib import import_module
 import sys
+import threading
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -12,9 +14,12 @@ import pytest
 from app.config import Settings
 from app.technical.indicators import calculate_indicators
 from app.technical.kronos import (
+    _INFERENCE_LOCK,
     KronosError,
+    KronosProcessPool,
     _kronos_runtime_spec,
     _predict_live,
+    _predict_live_with_timeout,
     predict_kronos,
     validate_kronos_result,
 )
@@ -545,6 +550,84 @@ def test_kronos_live_uses_cpu_friendly_history_and_single_sample(
     monkeypatch.setattr("app.technical.kronos._get_live_predictor", lambda _settings: FakePredictor())
     _predict_live(frame, "600519.SH", AS_OF, "version", settings)
 
-    assert settings.kronos_lookback == 240
-    assert len(calls["df"]) == 240
+    assert settings.kronos_lookback == 120
+    assert settings.kronos_prediction_length == 5
+    assert len(calls["df"]) == 120
     assert calls["sample_count"] == 1
+
+
+def test_kronos_live_waits_for_the_current_inference_slot(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    frame = get_market_data("600519.SH", AS_OF, settings)
+    expected = predict_kronos(frame, "600519.SH", AS_OF, "version", settings)
+    live = settings.model_copy(
+        update={
+            "kronos_mode": "live",
+            "kronos_model_name": "NeoQuasar/Kronos-mini",
+            "kronos_queue_timeout_seconds": 1,
+        }
+    )
+    monkeypatch.setattr(
+        "app.technical.kronos._KRONOS_PROCESS_POOL.predict",
+        lambda *_args, **_kwargs: expected,
+    )
+    assert _INFERENCE_LOCK.acquire(blocking=False)
+    releaser = threading.Thread(
+        target=lambda: (time.sleep(0.05), _INFERENCE_LOCK.release()),
+        daemon=True,
+    )
+    releaser.start()
+    try:
+        actual = _predict_live_with_timeout(
+            frame, "600519.SH", AS_OF, "version", live
+        )
+    finally:
+        releaser.join(timeout=1)
+        if _INFERENCE_LOCK.locked():
+            _INFERENCE_LOCK.release()
+
+    assert actual == expected
+
+
+@pytest.mark.filterwarnings(
+    "ignore:This process .* is multi-threaded, use of fork.*:DeprecationWarning"
+)
+def test_kronos_process_timeout_restarts_worker_and_releases_the_next_request(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    frame = get_market_data("600519.SH", AS_OF, settings)
+    expected = predict_kronos(frame, "600519.SH", AS_OF, "version", settings)
+    live = settings.model_copy(
+        update={
+            "kronos_mode": "live",
+            "kronos_model_name": "NeoQuasar/Kronos-mini",
+            "kronos_timeout_seconds": 0.05,
+        }
+    )
+    pool = KronosProcessPool(context_name="fork")
+
+    def slow_prediction(*_args, **_kwargs):
+        time.sleep(1)
+        return expected
+
+    monkeypatch.setattr("app.technical.kronos._predict_live", slow_prediction)
+    try:
+        with pytest.raises(KronosError, match="推理超时"):
+            pool.predict(frame, "600519.SH", AS_OF, "version", live)
+
+        monkeypatch.setattr(
+            "app.technical.kronos._predict_live",
+            lambda *_args, **_kwargs: expected,
+        )
+        recovered = pool.predict(
+            frame,
+            "600519.SH",
+            AS_OF,
+            "version",
+            live.model_copy(update={"kronos_timeout_seconds": 1}),
+        )
+    finally:
+        pool.shutdown()
+
+    assert recovered == expected

@@ -11,6 +11,7 @@ from app.runtime.pi_client import MockPiClient
 from app.runtime.repository import RuntimeRepository
 from app.technical.workflow import TechnicalWorkflow
 from app.technical.report import generate_technical_report
+from app.technical.kronos import KronosError
 
 
 def make_workflow(settings, session_factory, *, interrupt_after=None):
@@ -112,6 +113,41 @@ def test_technical_workflow_generates_all_artifacts_and_authoritative_report(
     assert (directory / "technical_chart.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert f"/api/runs/{run_id}/artifacts/technical_chart.png" not in report
     assert state["report_path"] == str(directory / "technical_report.html")
+
+
+def test_live_kronos_failure_degrades_without_interrupting_the_report(
+    settings, session_factory, monkeypatch
+):
+    live = settings.model_copy(
+        update={
+            "kronos_mode": "live",
+            "kronos_model_name": "NeoQuasar/Kronos-mini",
+        }
+    )
+    monkeypatch.setattr(
+        "app.technical.workflow.predict_kronos",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            KronosError("模型推理超时")
+        ),
+    )
+    service = RunService(session_factory, live.artifacts_dir)
+    run_id = create_claimed_run(service)
+    workflow = make_workflow(live, session_factory)
+    try:
+        state = workflow.run(run_id)
+    finally:
+        workflow.shutdown()
+
+    directory = live.artifacts_dir / run_id
+    kronos = json.loads((directory / "kronos_result.json").read_text())
+    report = (directory / "technical_report.html").read_text(encoding="utf-8")
+    assert service.get_run(run_id).status == "COMPLETED"
+    assert state["error_message"] is None
+    assert kronos["status"] == "unavailable"
+    assert kronos["direction_probability"] is None
+    assert "Kronos 模型本次不可用" in report
+    assert "模型推理超时" in report
+    assert "两类结果均基于" not in report
 
 
 def test_technical_workflow_resume_does_not_repeat_research(settings, session_factory):

@@ -54,10 +54,11 @@ class Settings(BaseModel):
     kronos_model_name: str = ""
     kronos_device: str = "cpu"
     kronos_source_dir: Path = Path("./vendor/kronos")
-    kronos_lookback: int = Field(default=240, ge=20, le=512)
+    kronos_lookback: int = Field(default=120, ge=20, le=512)
     kronos_sample_count: int = Field(default=1, ge=1, le=5)
-    kronos_prediction_length: int = Field(default=10, ge=1, le=120)
-    kronos_timeout_seconds: float = Field(default=300, gt=0)
+    kronos_prediction_length: int = Field(default=5, ge=1, le=120)
+    kronos_timeout_seconds: float = Field(default=360, gt=0)
+    kronos_queue_timeout_seconds: float = Field(default=420, gt=0)
     technical_research_profile: str = "technical_research"
     technical_assembly_profile: str = "technical_assembly"
     technical_workflow_version: str = "technical_v1"
@@ -165,13 +166,16 @@ class Settings(BaseModel):
             kronos_source_dir=Path(
                 os.getenv("KRONOS_SOURCE_DIR", "./vendor/kronos")
             ),
-            kronos_lookback=int(os.getenv("KRONOS_LOOKBACK", "240")),
+            kronos_lookback=int(os.getenv("KRONOS_LOOKBACK", "120")),
             kronos_sample_count=int(os.getenv("KRONOS_SAMPLE_COUNT", "1")),
             kronos_prediction_length=int(
-                os.getenv("KRONOS_PREDICTION_LENGTH", "10")
+                os.getenv("KRONOS_PREDICTION_LENGTH", "5")
             ),
             kronos_timeout_seconds=float(
-                os.getenv("KRONOS_TIMEOUT_SECONDS", "300")
+                os.getenv("KRONOS_TIMEOUT_SECONDS", "360")
+            ),
+            kronos_queue_timeout_seconds=float(
+                os.getenv("KRONOS_QUEUE_TIMEOUT_SECONDS", "420")
             ),
             technical_research_profile=os.getenv(
                 "TECHNICAL_RESEARCH_PROFILE", "technical_research"

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 import math
 import os
 import queue
 import sys
 import threading
+import uuid
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -38,6 +40,152 @@ class KronosRuntimeSpec:
     max_context: int
     device: str
     source_dir: Path
+
+
+def _process_settings_payload(settings: Settings) -> dict[str, Any]:
+    return {
+        "kronos_mode": "live",
+        "kronos_model_name": settings.kronos_model_name,
+        "kronos_device": settings.kronos_device,
+        "kronos_source_dir": settings.kronos_source_dir,
+        "kronos_lookback": settings.kronos_lookback,
+        "kronos_sample_count": settings.kronos_sample_count,
+        "kronos_prediction_length": settings.kronos_prediction_length,
+        "kronos_timeout_seconds": settings.kronos_timeout_seconds,
+        "kronos_queue_timeout_seconds": settings.kronos_queue_timeout_seconds,
+    }
+
+
+def _kronos_process_main(requests: Any, results: Any) -> None:
+    while True:
+        job = requests.get()
+        if job is None:
+            return
+        request_id, market_data, symbol, as_of_iso, data_version, payload = job
+        try:
+            settings = Settings.model_validate(payload)
+            result = _predict_live(
+                market_data,
+                symbol,
+                date.fromisoformat(as_of_iso),
+                data_version,
+                settings,
+            )
+            response = (request_id, True, result.model_dump(mode="json"))
+        except BaseException as exc:
+            if isinstance(exc, KronosError):
+                message = str(exc).removeprefix(f"{exc.code}: ")
+                retryable = exc.retryable
+            else:
+                message = "Kronos 子进程执行失败"
+                retryable = True
+            response = (
+                request_id,
+                False,
+                {"message": message, "retryable": retryable},
+            )
+        results.put(response)
+
+
+class KronosProcessPool:
+    """One persistent model process with bounded FIFO access and hard timeouts."""
+
+    def __init__(self, *, context_name: str = "spawn") -> None:
+        self._context = multiprocessing.get_context(context_name)
+        self._request_lock = threading.Lock()
+        self._process: Any | None = None
+        self._requests: Any | None = None
+        self._results: Any | None = None
+
+    def predict(
+        self,
+        market_data: pd.DataFrame,
+        symbol: str,
+        as_of: date,
+        data_version: str,
+        settings: Settings,
+    ) -> KronosResult:
+        if not self._request_lock.acquire(
+            timeout=settings.kronos_queue_timeout_seconds
+        ):
+            raise KronosError("Kronos Live 推理排队超时")
+        try:
+            self._ensure_started()
+            assert self._requests is not None
+            assert self._results is not None
+            request_id = uuid.uuid4().hex
+            self._requests.put(
+                (
+                    request_id,
+                    market_data,
+                    symbol,
+                    as_of.isoformat(),
+                    data_version,
+                    _process_settings_payload(settings),
+                )
+            )
+            try:
+                response_id, succeeded, payload = self._results.get(
+                    timeout=settings.kronos_timeout_seconds
+                )
+            except queue.Empty as exc:
+                self._stop(force=True)
+                raise KronosError("Kronos 模型推理超时") from exc
+            if response_id != request_id:
+                self._stop(force=True)
+                raise KronosError("Kronos 子进程响应与请求不匹配")
+            if not succeeded:
+                raise KronosError(
+                    payload["message"],
+                    retryable=bool(payload.get("retryable")),
+                )
+            return KronosResult.model_validate(payload)
+        finally:
+            self._request_lock.release()
+
+    def _ensure_started(self) -> None:
+        if self._process is not None and self._process.is_alive():
+            return
+        self._stop(force=True)
+        self._requests = self._context.Queue(maxsize=1)
+        self._results = self._context.Queue(maxsize=1)
+        self._process = self._context.Process(
+            target=_kronos_process_main,
+            args=(self._requests, self._results),
+            name="kronos-live-worker",
+            daemon=True,
+        )
+        self._process.start()
+
+    def _stop(self, *, force: bool) -> None:
+        process = self._process
+        requests = self._requests
+        results = self._results
+        self._process = None
+        self._requests = None
+        self._results = None
+        if process is not None:
+            if process.is_alive() and not force and requests is not None:
+                requests.put(None)
+                process.join(timeout=3)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=3)
+        for channel in (requests, results):
+            if channel is not None:
+                channel.close()
+                channel.cancel_join_thread()
+
+    def shutdown(self) -> None:
+        with self._request_lock:
+            self._stop(force=False)
+
+
+_KRONOS_PROCESS_POOL = KronosProcessPool()
+
+
+def shutdown_kronos_worker() -> None:
+    _KRONOS_PROCESS_POOL.shutdown()
 
 
 def _kronos_runtime_spec(settings: Settings) -> KronosRuntimeSpec:
@@ -85,39 +233,16 @@ def _predict_live_with_timeout(
     data_version: str,
     settings: Settings,
 ) -> KronosResult:
-    if not _INFERENCE_LOCK.acquire(blocking=False):
-        raise KronosError("已有 Kronos Live 推理尚未结束")
-    results: queue.Queue[tuple[bool, Any]] = queue.Queue(maxsize=1)
-
-    def run_inference() -> None:
-        try:
-            outcome: tuple[bool, Any] = (
-                True,
-                _predict_live(
-                    market_data, symbol, as_of, data_version, settings
-                ),
-            )
-        except BaseException as exc:
-            outcome = (False, exc)
-        finally:
-            _INFERENCE_LOCK.release()
-        results.put(outcome)
-
-    # A timed-out native model call cannot be safely killed inside CPython.
-    # A daemon single-flight thread prevents concurrent predictor use and does
-    # not keep Worker shutdown hostage. Timeouts are deliberately non-retryable.
-    threading.Thread(
-        target=run_inference,
-        name="kronos-live-inference",
-        daemon=True,
-    ).start()
+    if not _INFERENCE_LOCK.acquire(
+        timeout=settings.kronos_queue_timeout_seconds
+    ):
+        raise KronosError("Kronos Live 推理排队超时")
     try:
-        succeeded, value = results.get(timeout=settings.kronos_timeout_seconds)
-    except queue.Empty as exc:
-        raise KronosError("Kronos 模型推理超时") from exc
-    if succeeded:
-        return value
-    raise value
+        return _KRONOS_PROCESS_POOL.predict(
+            market_data, symbol, as_of, data_version, settings
+        )
+    finally:
+        _INFERENCE_LOCK.release()
 
 
 def _predict_mock(
@@ -262,6 +387,11 @@ def validate_kronos_result(
 ) -> None:
     if result.symbol != expected_symbol or result.data_version != expected_data_version:
         raise KronosError("Kronos 输出与当前证券或数据版本不一致")
+    if result.status == "unavailable":
+        return
+    assert result.direction_probability is not None
+    assert result.expected_return_range is not None
+    assert result.model_confidence is not None
     probabilities = result.direction_probability.model_dump().values()
     if any(not math.isfinite(value) or value < 0 or value > 1 for value in probabilities):
         raise KronosError("Kronos 方向概率越界")
@@ -276,6 +406,28 @@ def validate_kronos_result(
         or not 0 <= result.model_confidence <= 1
     ):
         raise KronosError("Kronos 收益区间或置信度非法")
+
+
+def unavailable_kronos_result(
+    symbol: str,
+    as_of: date,
+    data_version: str,
+    settings: Settings,
+    error: KronosError,
+) -> KronosResult:
+    reason = str(error).removeprefix(f"{error.code}: ")
+    return KronosResult(
+        symbol=symbol,
+        as_of=as_of,
+        horizon=f"{settings.kronos_prediction_length}_trading_days",
+        status="unavailable",
+        direction_probability=None,
+        expected_return_range=None,
+        model_confidence=None,
+        model_version=settings.kronos_model_name or "kronos_live",
+        data_version=data_version,
+        unavailable_reason=reason,
+    )
 
 
 def atomic_write_kronos(result: KronosResult, path: Path) -> None:

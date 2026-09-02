@@ -28,7 +28,13 @@ from app.runtime.pi_client import BridgePiClient, PiClient
 from app.runtime.profiles import ProfileLoader
 from app.runtime.repository import RuntimeRepository
 from app.runtime.tool_registry import ToolRegistry
-from app.technical.kronos import KronosError, atomic_write_kronos, predict_kronos
+from app.technical.kronos import (
+    KronosError,
+    atomic_write_kronos,
+    predict_kronos,
+    shutdown_kronos_worker,
+    unavailable_kronos_result,
+)
 from app.technical.market_data import load_persisted_market_data, resolve_security
 from app.technical.report import generate_technical_report, technical_report_is_current
 from app.technical.schemas import (
@@ -197,6 +203,7 @@ class TechnicalWorkflow:
         return TechnicalGraphState(**result)
 
     def shutdown(self) -> None:
+        shutdown_kronos_worker()
         if self._owns_client:
             self.pi_client.shutdown()
         self._checkpoint_connection.close()
@@ -360,8 +367,29 @@ class TechnicalWorkflow:
                         )
                         break
                     except KronosError as exc:
-                        if attempt >= 1 or not exc.retryable:
+                        if attempt < 1 and exc.retryable:
+                            continue
+                        if self.settings.kronos_mode != "live":
                             raise
+                        result = unavailable_kronos_result(
+                            run.resolved_symbol or "",
+                            date.fromisoformat(run.as_of),
+                            run.data_version or "",
+                            self.settings,
+                            exc,
+                        )
+                        LOGGER.warning(
+                            "Kronos Live unavailable; continuing technical report",
+                            extra={
+                                "component": "technical",
+                                "run_id": run.run_id,
+                                "workflow": self.settings.technical_workflow_version,
+                                "node": node,
+                                "status": "DEGRADED",
+                                "error_type": type(exc).__name__,
+                            },
+                        )
+                        break
                 self._validate_identity(result, run)
                 atomic_write_kronos(result, output_path)
             return {

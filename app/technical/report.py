@@ -69,6 +69,26 @@ def _load_visuals(artifact_dir: Path) -> ReportVisuals | None:
         return None
 
 
+def _kronos_report_section(kronos: KronosResult) -> str:
+    if kronos.status == "unavailable":
+        return (
+            "- 状态：Kronos 模型本次不可用\n"
+            f"- 原因：{kronos.unavailable_reason}\n"
+            "- 说明：本报告继续使用已校验的历史行情、技术指标和形态结果。"
+        )
+    assert kronos.direction_probability is not None
+    assert kronos.expected_return_range is not None
+    assert kronos.model_confidence is not None
+    probability = kronos.direction_probability
+    expected_range = kronos.expected_return_range
+    return f"""- 预测周期：{kronos.horizon}
+- 上涨概率：{probability.up:.2%}
+- 震荡概率：{probability.flat:.2%}
+- 下跌概率：{probability.down:.2%}
+- 预期收益区间：{expected_range[0]:.2%} ～ {expected_range[1]:.2%}
+- 模型置信度：{kronos.model_confidence:.2%}"""
+
+
 def _canvas_payload(visuals: ReportVisuals) -> dict[str, object]:
     charts: list[dict[str, object]] = []
     for chart in visuals.charts:
@@ -295,8 +315,6 @@ def generate_technical_report(run: ResearchRun, artifact_dir: Path) -> Path:
             as_of=indicators.as_of,
             expected_data_version=run.data_version or "",
         )
-        probability = kronos.direction_probability
-        expected_range = kronos.expected_return_range
         levels = indicators.support_resistance
         visuals = _load_visuals(artifact_dir)
         report = f"""# 个股技术面分析报告
@@ -361,12 +379,7 @@ def generate_technical_report(run: ResearchRun, artifact_dir: Path) -> Path:
 
 ## 八、Kronos 模型结果
 
-- 预测周期：{kronos.horizon}
-- 上涨概率：{probability.up:.2%}
-- 震荡概率：{probability.flat:.2%}
-- 下跌概率：{probability.down:.2%}
-- 预期收益区间：{expected_range[0]:.2%} ～ {expected_range[1]:.2%}
-- 模型置信度：{kronos.model_confidence:.2%}
+{_kronos_report_section(kronos)}
 
 ## 九、信号一致与冲突
 
@@ -455,7 +468,6 @@ def technical_report_is_current(run: ResearchRun, artifact_dir: Path) -> bool:
             as_of=indicators.as_of,
             expected_data_version=run.data_version or "",
         )
-        probability = kronos.direction_probability
         levels = indicators.support_resistance
         visuals = _load_visuals(artifact_dir)
         if visuals is None:
@@ -479,6 +491,14 @@ def technical_report_is_current(run: ResearchRun, artifact_dir: Path) -> bool:
             for chart in visuals.charts
             if chart.status == "generated" and chart.annotations
         )
+        kronos_markers = [
+            "Kronos 模型本次不可用",
+            str(kronos.unavailable_reason),
+        ] if kronos.status == "unavailable" else [
+            f"上涨概率：{kronos.direction_probability.up:.2%}",
+            f"震荡概率：{kronos.direction_probability.flat:.2%}",
+            f"下跌概率：{kronos.direction_probability.down:.2%}",
+        ]
         required = [
             "个股技术面分析报告",
             str(run.resolved_symbol),
@@ -486,9 +506,6 @@ def technical_report_is_current(run: ResearchRun, artifact_dir: Path) -> bool:
             f"日线数量：{len(market)}",
             indicators.script_version,
             kronos.model_version,
-            f"上涨概率：{probability.up:.2%}",
-            f"震荡概率：{probability.flat:.2%}",
-            f"下跌概率：{probability.down:.2%}",
             f"20 日支撑位：{levels.support_20}",
             f"60 日阻力位：{levels.resistance_60}",
             "data-report-visuals=",
@@ -504,6 +521,7 @@ def technical_report_is_current(run: ResearchRun, artifact_dir: Path) -> bool:
             _safe_narrative(assembly.long_term),
             _safe_narrative(assembly.conclusion),
         ]
+        required.extend(kronos_markers)
         required.extend(chart_markers)
         # Pattern names are deterministic, code-generated facts and may
         # legitimately contain digits (for example, "20日突破").  Only

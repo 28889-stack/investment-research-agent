@@ -143,14 +143,39 @@ class KronosResult(StrictModel):
     symbol: str
     as_of: date
     horizon: str
-    direction_probability: DirectionProbability
-    expected_return_range: tuple[float, float]
-    model_confidence: float = Field(ge=0, le=1)
+    status: Literal["completed", "unavailable"] = "completed"
+    direction_probability: DirectionProbability | None = None
+    expected_return_range: tuple[float, float] | None = None
+    model_confidence: float | None = Field(default=None, ge=0, le=1)
     model_version: str
     data_version: str
+    unavailable_reason: str | None = None
 
     @model_validator(mode="after")
     def valid_range(self) -> "KronosResult":
+        if self.status == "unavailable":
+            if not self.unavailable_reason:
+                raise ValueError("unavailable Kronos result requires a reason")
+            if any(
+                value is not None
+                for value in (
+                    self.direction_probability,
+                    self.expected_return_range,
+                    self.model_confidence,
+                )
+            ):
+                raise ValueError("unavailable Kronos result cannot contain predictions")
+            return self
+        if any(
+            value is None
+            for value in (
+                self.direction_probability,
+                self.expected_return_range,
+                self.model_confidence,
+            )
+        ):
+            raise ValueError("completed Kronos result requires predictions")
+        assert self.expected_return_range is not None
         if not all(math.isfinite(value) for value in self.expected_return_range):
             raise ValueError("expected return range must be finite")
         if self.expected_return_range[0] > self.expected_return_range[1]:

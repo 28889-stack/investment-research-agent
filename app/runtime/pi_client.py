@@ -171,20 +171,28 @@ class MockPiClient:
         if profile["profile_id"] == "technical_assembly":
             research = context["technical_research"]
             kronos = context["kronos"]
-            probabilities = kronos["direction_probability"]
-            dominant = max(probabilities, key=probabilities.get)
             conflicts = list(research["conflicts"])
-            if dominant == "flat" and "偏强" in research["medium_term"]:
-                conflicts.append("技术指标中期偏强，而 Kronos 方向概率以震荡为主")
+            if kronos.get("status", "completed") == "completed":
+                probabilities = kronos["direction_probability"]
+                dominant = max(probabilities, key=probabilities.get)
+                if dominant == "flat" and "偏强" in research["medium_term"]:
+                    conflicts.append("技术指标中期偏强，而 Kronos 方向概率以震荡为主")
+                summary = "技术指标解释与 Kronos 预测已按同一数据版本完成对比。"
+                agreements = ["两类结果均基于同一标准化历史行情"]
+                uncertainties = ["模型概率与技术指标均不能消除未来不确定性"]
+            else:
+                summary = "Kronos 本次不可用，组装结论仅基于已校验技术指标。"
+                agreements = ["技术解释与指标产物使用同一标准化历史行情"]
+                uncertainties = ["Kronos 模型本次不可用，未纳入方向概率对照"]
             return json.dumps(
                 {
                     "symbol": research["symbol"],
                     "as_of": research["as_of"],
                     "data_version": research["data_version"],
-                    "summary": "技术指标解释与 Kronos 预测已按同一数据版本完成对比。",
-                    "agreements": ["两类结果均基于同一标准化历史行情"],
+                    "summary": summary,
+                    "agreements": agreements,
                     "conflicts": conflicts,
-                    "uncertainties": ["模型概率与技术指标均不能消除未来不确定性"],
+                    "uncertainties": uncertainties,
                     "short_term": research["short_term"],
                     "medium_term": research["medium_term"],
                     "long_term": research["long_term"],
