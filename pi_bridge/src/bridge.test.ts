@@ -3,7 +3,12 @@ import test from "node:test";
 
 import { Bridge } from "./bridge.js";
 import type { ProtocolMessage } from "./protocol.js";
-import { LiveAgentSession, summarizeUsage, validateLiveModel } from "./live-runtime.js";
+import {
+  LiveAgentSession,
+  TechnicalToolSequence,
+  summarizeUsage,
+  validateLiveModel,
+} from "./live-runtime.js";
 
 function request(id: string, type: string, payload: Record<string, unknown>): ProtocolMessage {
   return { id, type, payload };
@@ -26,6 +31,115 @@ const echoTool = {
   input_schema: { type: "object" },
   output_schema: { type: "object" },
 };
+
+test("technical tool sequence exposes one required tool at a time and converges", async () => {
+  const sequence = new TechnicalToolSequence();
+  const calls: string[] = [];
+  const invoke = async (name: string) => {
+    calls.push(name);
+    return { tool: name };
+  };
+
+  assert.deepEqual(sequence.availableToolNames, ["get_market_data"]);
+  const market = await sequence.execute("get_market_data", {}, invoke);
+  assert.equal(market.reused, false);
+  assert.equal(market.complete, false);
+  assert.deepEqual(sequence.availableToolNames, ["calculate_technical_indicators"]);
+
+  await sequence.execute("calculate_technical_indicators", {}, invoke);
+  assert.deepEqual(sequence.availableToolNames, ["get_technical_summary"]);
+
+  const summary = await sequence.execute("get_technical_summary", {}, invoke);
+  assert.equal(summary.complete, true);
+  assert.deepEqual(sequence.availableToolNames, []);
+  assert.deepEqual(calls, [
+    "get_market_data",
+    "calculate_technical_indicators",
+    "get_technical_summary",
+  ]);
+});
+
+test("technical tool sequence reuses a successful result and rejects out-of-order calls", async () => {
+  const sequence = new TechnicalToolSequence();
+  let calls = 0;
+  const invoke = async (name: string) => {
+    calls += 1;
+    return { tool: name, call: calls };
+  };
+
+  await assert.rejects(
+    sequence.execute("calculate_technical_indicators", {}, invoke),
+    /expected get_market_data/,
+  );
+  const first = await sequence.execute("get_market_data", {}, invoke);
+  const duplicate = await sequence.execute("get_market_data", {}, invoke);
+
+  assert.equal(calls, 1);
+  assert.equal(duplicate.reused, true);
+  assert.deepEqual(duplicate.result, first.result);
+  assert.deepEqual(sequence.availableToolNames, ["calculate_technical_indicators"]);
+});
+
+test("live technical session replaces the current loop tool snapshot between turns", async () => {
+  const session = new LiveAgentSession(
+    {
+      sessionId: "technical-tool-state-session",
+      profile: {
+        ...profile("full"),
+        profile_id: "technical_research",
+        allowed_tools: [
+          "get_market_data",
+          "calculate_technical_indicators",
+          "get_technical_summary",
+        ],
+        max_iterations: 5,
+        max_tool_calls: 5,
+      },
+      model: { provider: "deepseek", name: "deepseek-v4-pro", runtime_mode: "live" },
+      tools: [
+        { ...echoTool, name: "get_market_data" },
+        { ...echoTool, name: "calculate_technical_indicators" },
+        { ...echoTool, name: "get_technical_summary" },
+      ],
+    },
+    "test",
+  );
+  const internals = session as unknown as {
+    activeInvoker?: (name: string) => Promise<Record<string, unknown>>;
+    agent: {
+      state: { tools: Array<{
+        name: string;
+        executionMode?: string;
+        execute: (id: string, params: object) => Promise<unknown>;
+      }> };
+      prepareNextTurnWithContext?: (value: unknown) => Promise<{ context?: { tools?: Array<{ name: string }> } } | undefined>;
+    };
+  };
+  internals.activeInvoker = async (name) => ({ tool: name });
+  const currentLoopSnapshot = {
+    systemPrompt: "test",
+    messages: [],
+    tools: [...internals.agent.state.tools],
+  };
+
+  assert.deepEqual(currentLoopSnapshot.tools.map((tool) => tool.name), ["get_market_data"]);
+  assert.equal(currentLoopSnapshot.tools[0]?.executionMode, "sequential");
+  await currentLoopSnapshot.tools[0]?.execute("call-1", {});
+  const next = await internals.agent.prepareNextTurnWithContext?.({
+    context: currentLoopSnapshot,
+    message: {},
+    toolResults: [],
+    newMessages: [],
+  });
+
+  assert.deepEqual(next?.context?.tools?.map((tool) => tool.name), [
+    "calculate_technical_indicators",
+  ]);
+  assert.deepEqual(internals.agent.state.tools.map((tool) => tool.name), [
+    "calculate_technical_indicators",
+  ]);
+  session.close();
+});
 
 test("live DeepSeek sessions enable medium thinking", () => {
   const session = new LiveAgentSession(
