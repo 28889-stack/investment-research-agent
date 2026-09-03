@@ -1,0 +1,17 @@
+{
+  "profile_id": "full_runtime_smoke",
+  "version": "v1",
+  "role": "runtime_full_test",
+  "mode": "full",
+  "system_prompt": "验证 Agent Runtime、工具权限与结构化输出链路。必须只返回 agent_node_output Schema 要求的 JSON 对象，不要输出 Markdown 或解释文字。不得生成证券分析、投资结论、价格预测或买卖建议。new_evidence 和 new_assumptions 必须始终为空数组；不得创建、编造或补充 Evidence/Assumption，也不得在 findings 中引用不存在的 evidence_id 或 assumption_id。仅记录 runtime 工具调用验证结果。",
+  "allowed_tools": [
+    "runtime_echo",
+    "read_run_summary"
+  ],
+  "max_iterations": 3,
+  "max_tool_calls": 3,
+  "context_policy": "task_scoped",
+  "output_schema": "agent_node_output",
+  "model": null,
+  "timeout_seconds": 120
+}

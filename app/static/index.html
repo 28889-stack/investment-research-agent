@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f7f7f8">
+    <title>弦月研究</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body class="app-page selection-page">
+    <section id="access-gate" class="access-gate" aria-labelledby="access-gate-title" hidden>
+      <form id="access-form" class="access-gate-card glass-surface">
+        <p class="access-gate-eyebrow">Xianyue Research Access</p>
+        <h1 id="access-gate-title">输入邀请码</h1>
+        <p>验证后即可进入研究工作台。更换邀请码会使现有登录自动失效。</p>
+        <label class="field field-emphasis">
+          <span>邀请码</span>
+          <input id="invite-code" name="invite_code" type="password" autocomplete="current-password" required>
+        </label>
+        <div id="access-error" class="notice notice-error" role="alert" hidden></div>
+        <button id="access-submit" class="button button-primary" type="submit"><span>进入工作台</span></button>
+      </form>
+    </section>
+    <div class="ambient-field" aria-hidden="true"><span class="ambient-orb ambient-orb-primary"></span><span class="ambient-orb ambient-orb-secondary"></span><span class="ambient-grid"></span></div>
+    <div id="cursor-spotlight" class="cursor-spotlight" aria-hidden="true"></div>
+    <header class="app-header glass-surface">
+      <a class="app-brand" href="/" aria-label="弦月研究首页">
+        <svg class="brand-symbol" viewBox="0 0 40 40" aria-hidden="true">
+          <circle cx="20" cy="20" r="14"></circle>
+          <path d="M8 29L31 10"></path>
+          <path d="M11 31L34 12"></path>
+        </svg>
+        <span><strong>弦月研究</strong><small>AI 金融研究工作台</small></span>
+      </a>
+      <a class="app-header-link" href="#recent-research">研究记录</a>
+    </header>
+
+    <main class="selection-shell">
+      <section class="selection-grid" aria-labelledby="selection-title">
+        <div class="selection-intro">
+          <div>
+            <h1 id="selection-title">选择研究标的</h1>
+            <p>输入 A 股名称或代码，选择研究路径。系统将保留检索、分析与写作过程，并生成独立报告。</p>
+          </div>
+
+          <div class="signal-disc" aria-hidden="true">
+            <svg viewBox="0 0 360 360">
+              <circle cx="180" cy="180" r="134"></circle>
+              <circle cx="180" cy="180" r="108"></circle>
+              <circle cx="180" cy="180" r="80"></circle>
+              <path d="M56 248L304 92"></path>
+              <path d="M77 267L325 111"></path>
+              <path d="M101 214L146 187L181 199L226 151L269 160"></path>
+            </svg>
+          </div>
+
+          <fieldset class="research-mode-switcher">
+            <legend>研究类型</legend>
+            <label class="research-mode">
+              <input id="technical-mode" name="analysis_type" type="radio" value="technical" checked>
+              <span class="mode-number">01</span>
+              <span><strong>技术面分析</strong><small>趋势、量价、动量与模型判断</small></span>
+            </label>
+            <label class="research-mode">
+              <input id="fundamental-mode" name="analysis_type" type="radio" value="fundamental">
+              <span class="mode-number">02</span>
+              <span><strong>基本面研究</strong><small>公司、行业、财务与估值研究</small></span>
+            </label>
+          </fieldset>
+
+          <div id="workflow-preview" class="workflow-preview" aria-live="polite">
+            <strong id="workflow-title">技术面研究路径</strong>
+            <p id="workflow-description">解析证券与行情数据，完成指标研究、Kronos 分析、信号组装和报告生成。</p>
+            <ol id="workflow-steps" aria-label="所选研究路径"></ol>
+          </div>
+        </div>
+
+        <section class="research-form-shell glass-surface" aria-labelledby="create-title">
+          <header>
+            <h2 id="create-title">创建研究任务</h2>
+            <p>任务创建后将进入独立 Worker 队列。</p>
+          </header>
+
+          <form id="research-form">
+            <label class="field field-emphasis">
+              <span>股票名称或代码</span>
+              <input id="symbol" name="symbol" type="text" maxlength="64" autocomplete="off" placeholder="例如：600519 或 贵州茅台" required>
+            </label>
+
+            <div class="form-grid">
+              <label class="field">
+                <span>投资风格</span>
+                <select id="policy-id" name="policy_id">
+                  <option value="general_research">通用研究</option>
+                  <option value="buffett_style">巴菲特风格</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>数据截止日期</span>
+                <input id="as-of" name="as_of" type="date">
+              </label>
+            </div>
+
+            <div id="form-error" class="notice notice-error" role="alert" hidden></div>
+            <button id="submit-button" class="button button-primary submit-research" type="submit">
+              <span>开始研究</span>
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10h10M11 6l4 4-4 4"></path></svg>
+            </button>
+          </form>
+
+          <footer class="form-footnote">
+            <span>研究结果不构成投资建议或交易指令</span>
+            <span>本地运行</span>
+          </footer>
+        </section>
+      </section>
+
+      <section id="recent-research" class="research-history glass-surface" aria-labelledby="history-title">
+        <div class="section-header">
+          <div>
+            <h2 id="history-title">最近研究</h2>
+            <p>继续查看正在执行或已完成的任务。</p>
+          </div>
+          <button id="refresh-button" class="button button-secondary" type="button">刷新</button>
+        </div>
+        <div id="history-error" class="notice notice-error" role="alert" hidden></div>
+        <div class="table-wrap">
+          <table class="research-table">
+            <thead>
+              <tr>
+                <th>研究标的</th>
+                <th>类型</th>
+                <th>状态</th>
+                <th>当前阶段</th>
+                <th>创建时间</th>
+              </tr>
+            </thead>
+            <tbody id="run-list">
+              <tr><td colspan="5" class="empty-state">正在加载研究记录…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/index.js" defer></script>
+  </body>
+</html>

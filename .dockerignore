@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+tests
+data
+logs
+backups
+pi_bridge/node_modules
+pi_bridge/dist
+.DS_Store

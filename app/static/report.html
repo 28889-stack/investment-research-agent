@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>研究结果 · 金融投研 Agent</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/">金融投研 Agent</a>
+      <nav class="header-nav" aria-label="页面导航">
+        <a id="run-link" class="header-link" href="/">返回任务</a>
+        <a class="header-link" href="/">返回首页</a>
+      </nav>
+    </header>
+
+    <main class="page-shell page-shell-report">
+      <section class="page-heading page-heading-report">
+        <div>
+          <h1 id="report-title">研究结果</h1>
+          <p id="report-meta">正在读取报告…</p>
+        </div>
+        <a id="export-button" class="button button-secondary" download hidden>导出 HTML</a>
+      </section>
+
+      <div id="page-error" class="notice notice-error" role="alert" hidden></div>
+      <article id="report-content" class="panel report-body" aria-live="polite">
+        <p class="empty-state">正在加载报告…</p>
+      </article>
+    </main>
+
+    <script src="/static/report-charts.js" defer></script>
+    <script src="/static/report.js" defer></script>
+  </body>
+</html>

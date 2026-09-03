@@ -1,0 +1,16 @@
+fastapi==0.141.1
+uvicorn==0.52.1
+SQLAlchemy==2.0.51
+pydantic==2.13.4
+python-dotenv==1.2.2
+Markdown==3.10.3
+bleach==6.4.0
+pytest==9.1.1
+httpx==0.28.1
+langgraph==1.2.10
+langgraph-checkpoint-sqlite==3.1.1
+numpy==2.4.6
+pandas==3.0.5
+matplotlib==3.11.1
+akshare==1.18.81
+pypdf==6.14.2
